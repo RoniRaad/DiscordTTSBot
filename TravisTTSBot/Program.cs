@@ -31,6 +31,20 @@ var ccfg = new CommandsNextConfiguration
 };
 
 _client.MessageCreated += _client_MessageCreated;
+_client.VoiceStateUpdated += _client_VoiceStateUpdated;
+
+Task _client_VoiceStateUpdated(DiscordClient sender, DSharpPlus.EventArgs.VoiceStateUpdateEventArgs args)
+{
+	var botVoiceConnection = sender.GetVoiceNext().GetConnection(args.Before.Guild);
+	var userLeftChannel = args?.After?.Channel is null;
+	var channelIsNowEmpty = args?.Before?.Channel?.Users.Count(x => !x.IsBot && x.Id != args.User.Id) == 0;
+
+	if (botVoiceConnection is null || !userLeftChannel || !channelIsNowEmpty)
+		return Task.CompletedTask;
+
+	botVoiceConnection.Disconnect();
+	return Task.CompletedTask;
+}
 
 Task _client_MessageCreated(DiscordClient sender, DSharpPlus.EventArgs.MessageCreateEventArgs args)
 {
@@ -57,8 +71,6 @@ async Task MessageCreated(DiscordClient sender, DSharpPlus.EventArgs.MessageCrea
 CommandsNextExtension commands = _client.UseCommandsNext(ccfg);
 commands.RegisterCommands<TTSCommands>();
 var voiceNextExt = _client.UseVoiceNext();
-
-
 
 await _client.ConnectAsync();
 

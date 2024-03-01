@@ -45,7 +45,7 @@ async Task MessageCreated(DiscordClient sender, DSharpPlus.EventArgs.MessageCrea
 	if (member is null)
 		return;
 
-	if (member.VoiceState?.IsSelfMuted is true
+	if (member.VoiceState?.IsSelfMuted is false
 		|| args.Message.Content[0] == '!' 
 		|| !args.Channel.Name.EndsWith("tts") 
 		|| args.Author.IsBot)

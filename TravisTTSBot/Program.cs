@@ -35,7 +35,7 @@ _client.VoiceStateUpdated += _client_VoiceStateUpdated;
 
 Task _client_VoiceStateUpdated(DiscordClient sender, DSharpPlus.EventArgs.VoiceStateUpdateEventArgs args)
 {
-	var botVoiceConnection = sender.GetVoiceNext().GetConnection(args.Before.Guild);
+	var botVoiceConnection = sender.GetVoiceNext().GetConnection(args.Guild);
 	var userLeftChannel = args?.After?.Channel is null;
 	var channelIsNowEmpty = args?.Before?.Channel?.Users.Count(x => !x.IsBot && x.Id != args.User.Id) == 0;
 

@@ -45,8 +45,7 @@ namespace TTSBot.Modules
 		[Command("setvoice"), Description("Sets the users prefered tts voice.")]
 		public async Task SetVoice(CommandContext ctx, [RemainingText, Description("The voice to set")] string voice)
 		{
-			var ttsclient = TextToSpeechClient.Create();
-			var isValidVoice = ttsclient.ListVoices(new ListVoicesRequest()).Voices.Where(v => v.Name == voice).Any();
+			var isValidVoice = TTSClient.ListVoices(new ListVoicesRequest()).Voices.Where(v => v.Name == voice).Any();
 			if (!isValidVoice)
 			{
 				await ctx.RespondAsync("Error: Given voice is not valid!");

@@ -16,7 +16,7 @@ var ttsRegistry = new TTSProviderRegistry(defaultProvider: googleTTS);
 // Override provider for specific users by Discord user ID:
 ttsRegistry.SetUserProvider(246016109663354880, localTTS, "Trav");
 ttsRegistry.SetUserProvider(280553115583774720, localTTS, "Adri");
-ttsRegistry.SetUserProvider(790584186054377472, localTTS, "Trav");
+ttsRegistry.SetUserProvider(790584186054377472, localTTS, "Adri");
 
 TTSCommands.Providers = ttsRegistry;
 

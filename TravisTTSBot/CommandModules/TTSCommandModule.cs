@@ -137,10 +137,15 @@ namespace TTSBot.Modules
 					_voiceClients[guildId] = voiceClient;
 
 					using var voiceStream = voiceClient.CreateVoiceStream();
-					using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
-
-					await pcmStream.CopyToAsync(opusStream);
-					await opusStream.FlushAsync();
+					try
+					{
+						using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
+                        await pcmStream.CopyToAsync(opusStream);
+                        await opusStream.FlushAsync();
+                    }
+					catch (Exception ex) {
+                        Console.WriteLine($"An error occured: {ex.Message}");
+                    }
 				}
 			}
 			finally

@@ -123,8 +123,16 @@ namespace TTSBot.Modules
 					}
 
 					var voiceClient = await client.JoinVoiceChannelAsync(guildId, channelId);
-					await voiceClient.StartAsync();
-					await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
+					try
+					{
+                        await voiceClient.StartAsync();
+                    }
+					catch(Exception ex)
+					{
+						Console.WriteLine($"An error occured: {ex.Message}");
+					}
+
+                    await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
 
 					_voiceClients[guildId] = voiceClient;
 

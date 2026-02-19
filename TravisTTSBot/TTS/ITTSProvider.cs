@@ -11,5 +11,7 @@ namespace DiscordTTSBot.TTS
 		IReadOnlyList<string> GetAvailableVoices();
 
 		string DefaultVoice { get; }
+
+		bool IsReady => true;
 	}
 }

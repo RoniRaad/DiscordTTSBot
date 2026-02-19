@@ -12,6 +12,7 @@ namespace DiscordTTSBot.TTS
 
 		public string Name => "local";
 		public string DefaultVoice => "Trav";
+		public bool IsReady => _healthy;
 		public Func<Task>? OnWakeUp { get; set; }
 
 		public void ResetHealth()
@@ -49,7 +50,7 @@ namespace DiscordTTSBot.TTS
 				try
 				{
 					using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-					cts.CancelAfter(TimeSpan.FromSeconds(5));
+					cts.CancelAfter(TimeSpan.FromSeconds(2));
 					var response = await _httpClient.GetAsync($"{_baseUrl}/v1/models", cts.Token);
 					if (response.IsSuccessStatusCode)
 					{

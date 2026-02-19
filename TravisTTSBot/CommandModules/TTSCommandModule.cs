@@ -3,6 +3,7 @@ using DiscordTTSBot.TTS;
 using NetCord.Gateway;
 using NetCord.Gateway.Voice;
 using NetCord.Services.Commands;
+using NetCord.Rest;
 using TTSBot.Static;
 
 namespace TTSBot.Modules
@@ -25,7 +26,7 @@ namespace TTSBot.Modules
 			if (voiceState.ChannelId is not ulong channelId)
 				return;
 
-			await PlayTTSAsync(Context.Client, guildId, channelId, Context.User.Id, words);
+			await PlayTTSAsync(Context.Client, guildId, channelId, Context.User.Id, words, Context.Message.ChannelId);
 		}
 
 		[Command("voices")]
@@ -87,11 +88,21 @@ namespace TTSBot.Modules
 			}
 		}
 
-		public static async Task PlayTTSAsync(GatewayClient client, ulong guildId, ulong channelId, ulong userId, string words)
+		public static async Task PlayTTSAsync(GatewayClient client, ulong guildId, ulong channelId, ulong userId, string words, ulong? textChannelId = null)
 		{
 			Console.WriteLine($"Received tts command from user. Input: {words}");
 
 			var provider = Providers.GetProviderForUser(userId);
+
+			if (!provider.IsReady && textChannelId is ulong notifyChannelId)
+			{
+				try
+				{
+					await client.Rest.SendMessageAsync(notifyChannelId, new MessageProperties { Content = "Initializing TTS server, this may take up to two minutes..." });
+				}
+				catch { }
+			}
+
 			var voice = Providers.GetVoiceOverride(userId) ?? UserSettingsHelper.GetUserVoice(userId);
 			using var audioStream = await provider.SynthesizeAsync(words, voice);
 

@@ -192,7 +192,7 @@ async Task HandleAutoTTS(Message message)
 	if (voiceState.ChannelId is not ulong channelId)
 		return;
 
-	await TTSCommands.PlayTTSAsync(client, guildId, channelId, message.Author.Id, message.Content);
+	await TTSCommands.PlayTTSAsync(client, guildId, channelId, message.Author.Id, message.Content, message.ChannelId);
 }
 
 await client.StartAsync();

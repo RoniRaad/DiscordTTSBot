@@ -148,7 +148,11 @@ namespace TTSBot.Modules
                     }
 				}
 			}
-			finally
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occured: {ex.Message}");
+            }
+            finally
 			{
 				_voiceLock.Release();
 			}

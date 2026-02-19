@@ -1,117 +1,143 @@
-﻿using DiscordTTSBot.Static;
-using DSharpPlus;
-using DSharpPlus.CommandsNext;
-using DSharpPlus.CommandsNext.Attributes;
-using DSharpPlus.Entities;
-using DSharpPlus.VoiceNext;
-using Google.Cloud.TextToSpeech.V1;
+using DiscordTTSBot.Static;
+using DiscordTTSBot.TTS;
+using NetCord.Gateway;
+using NetCord.Gateway.Voice;
+using NetCord.Services.Commands;
 using TTSBot.Static;
 
 namespace TTSBot.Modules
 {
-	public class TTSCommands : BaseCommandModule
+	public class TTSCommands : CommandModule<CommandContext>
 	{
-		public static TextToSpeechClient TTSClient;
+		public static TTSProviderRegistry Providers { get; set; } = null!;
+		public static GatewayClient Client { get; set; } = null!;
 
-		static TTSCommands()
+		[Command("t")]
+		public async Task PlayTTS([CommandParameter(Remainder = true)] string words)
 		{
-			var ttsCredentialsJson = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS_JSON");
-			if (ttsCredentialsJson is null)
+			if (Context.Message.GuildId is not ulong guildId)
+				return;
+
+			var guild = Context.Client.Cache.Guilds[guildId];
+			if (!guild.VoiceStates.TryGetValue(Context.User.Id, out var voiceState))
+				return;
+
+			if (voiceState.ChannelId is not ulong channelId)
+				return;
+
+			await PlayTTSAsync(Context.Client, guildId, channelId, Context.User.Id, words);
+		}
+
+		[Command("voices")]
+		public async Task VoicesCommand()
+		{
+			var provider = Providers.GetProviderForUser(Context.User.Id);
+			var voices = provider.GetAvailableVoices();
+			var sample = string.Join(", ", voices.Take(20));
+			var msg = $"Using provider: **{provider.Name}** ({voices.Count} voices)\nExamples: {sample}";
+			if (voices.Count > 20)
+				msg += $"\n...and {voices.Count - 20} more.";
+			await Context.Message.ReplyAsync(msg);
+		}
+
+		[Command("setvoice")]
+		public async Task SetVoice([CommandParameter(Remainder = true)] string voice)
+		{
+			var provider = Providers.GetProviderForUser(Context.User.Id);
+			if (!provider.IsValidVoice(voice))
 			{
-				Console.Error.WriteLine("GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is not set. Aborting");
-				Environment.Exit(1);
+				await Context.Message.ReplyAsync("Error: Given voice is not valid!");
+				return;
 			}
 
-			var ttsClientBuilder = new TextToSpeechClientBuilder();
-			ttsClientBuilder.JsonCredentials = ttsCredentialsJson;
-			TTSClient =  ttsClientBuilder.Build();
+			await UserSettingsHelper.SetUserVoice(Context.User.Id, voice);
+			await Context.Message.ReplyAsync("Voice set successfully!");
 		}
 
-		[Command("t"), Description("Plays TTS in your channel.")]
-		public async Task PlayTTS(CommandContext ctx, [RemainingText, Description("The words to TTS")] string words)
-		{
-			if (ctx.Member is null)
-				return;
+		private static readonly SemaphoreSlim _voiceLock = new(1, 1);
+		private static readonly Dictionary<ulong, VoiceClient> _voiceClients = new();
 
-			await PlayTTSAsync(ctx.Member, ctx.Client, words);
-		}
+		public static Func<Task>? OnLastVoiceDisconnect { get; set; }
 
-		[Command("voices"), Description("Plays a youtube or soundcloud link in your channel.")]
-		public async Task VoicesCommand(CommandContext ctx)
+		public static void DisconnectFromGuild(ulong guildId)
 		{
-			await ctx.RespondAsync("Voice options can be found here. https://cloud.google.com/text-to-speech/docs/voices");
-		}
-
-		[Command("setvoice"), Description("Sets the users prefered tts voice.")]
-		public async Task SetVoice(CommandContext ctx, [RemainingText, Description("The voice to set")] string voice)
-		{
-			var isValidVoice = TTSClient.ListVoices(new ListVoicesRequest()).Voices.Where(v => v.Name == voice).Any();
-			if (!isValidVoice)
+			_voiceLock.Wait();
+			try
 			{
-				await ctx.RespondAsync("Error: Given voice is not valid!");
-				return;
+				if (_voiceClients.Remove(guildId, out var voiceClient))
+				{
+					voiceClient.Dispose();
+
+					// Tell Discord to leave the voice channel
+					_ = Client.UpdateVoiceStateAsync(new VoiceStateProperties(guildId, null));
+
+					if (_voiceClients.Count == 0 && OnLastVoiceDisconnect is not null)
+					{
+						_ = Task.Run(async () =>
+						{
+							try { await OnLastVoiceDisconnect(); }
+							catch (Exception ex) { Console.Error.WriteLine($"OnLastVoiceDisconnect failed: {ex.Message}"); }
+						});
+					}
+				}
 			}
-
-			await UserSettingsHelper.SetUserVoice(ctx.User.Id, voice);
-			await ctx.RespondAsync("Voice set successfully!");
+			finally
+			{
+				_voiceLock.Release();
+			}
 		}
 
-		public static async Task PlayTTSAsync(DiscordMember author, DiscordClient client, string words)
+		public static async Task PlayTTSAsync(GatewayClient client, ulong guildId, ulong channelId, ulong userId, string words)
 		{
-			Console.WriteLine($"Recieved tts command from user. Input: {words}");
-			var channel = author?.VoiceState?.Channel;
+			Console.WriteLine($"Received tts command from user. Input: {words}");
 
-			if (channel is null)
-				return;
-		
-			var speech = TTSClient.SynthesizeSpeech(new()
+			var provider = Providers.GetProviderForUser(userId);
+			var voice = Providers.GetVoiceOverride(userId) ?? UserSettingsHelper.GetUserVoice(userId);
+			using var audioStream = await provider.SynthesizeAsync(words, voice);
+
+			var pcmStream = await StreamHelpers.ConvertToDiscordAudioFormat(audioStream);
+			pcmStream.Position = 0;
+
+			await _voiceLock.WaitAsync();
+			try
 			{
-				Input = new()
+				// Reuse existing voice client if already connected to the same channel,
+				// otherwise dispose the old one and create a new connection
+				if (_voiceClients.TryGetValue(guildId, out var existingClient)
+					&& existingClient.ChannelId == channelId)
 				{
-					Text = words,
-				},
-				AudioConfig = new()
-				{
-					AudioEncoding = AudioEncoding.OggOpus,
-				},
-				Voice = new()
-				{
-					Name = UserSettingsHelper.GetUserVoice(author.Id),
-					LanguageCode = "en-Us"
-				},
+					await existingClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
 
-			});
+					using var voiceStream = existingClient.CreateVoiceStream();
+					using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
 
-			using (var speechStream = new MemoryStream())
+					await pcmStream.CopyToAsync(opusStream);
+					await opusStream.FlushAsync();
+				}
+				else
+				{
+					if (existingClient is not null)
+					{
+						existingClient.Dispose();
+						_voiceClients.Remove(guildId);
+					}
+
+					var voiceClient = await client.JoinVoiceChannelAsync(guildId, channelId);
+					await voiceClient.StartAsync();
+					await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
+
+					_voiceClients[guildId] = voiceClient;
+
+					using var voiceStream = voiceClient.CreateVoiceStream();
+					using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
+
+					await pcmStream.CopyToAsync(opusStream);
+					await opusStream.FlushAsync();
+				}
+			}
+			finally
 			{
-				speech.AudioContent.WriteTo(speechStream);
-				speechStream.Position = 0;
-				var stream = await StreamHelpers.ConvertToDiscordAudioFormat(speechStream);
-				stream.Position = 0;
-
-				var audioClient = client.GetVoiceNext();
-				if (audioClient is null)
-				{
-					return;
-				}
-
-				var connection = audioClient.GetConnection(author.Guild);
-
-				if (connection?.TargetChannel?.Id != channel.Id)
-					connection = await channel.ConnectAsync();
-
-				var sink = connection.GetTransmitSink();
-
-				try
-				{
-					await stream.CopyToAsync(sink);
-				}
-				finally
-				{
-					await stream.FlushAsync();
-					await sink.FlushAsync();
-					await connection.WaitForPlaybackFinishAsync();
-				}
+				_voiceLock.Release();
 			}
 		}
 	}

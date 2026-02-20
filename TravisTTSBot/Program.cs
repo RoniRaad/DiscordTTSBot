@@ -13,6 +13,9 @@ using TTSBot.Modules;
 var googleTTS = new GoogleTTSProvider();
 var localTTSHost = Environment.GetEnvironmentVariable("LOCAL_TTS_HOST") ?? "192.168.1.67";
 var localTTS = new LocalApiTTSProvider(baseUrl: $"http://{localTTSHost}:8880");
+localTTS.AddVoice("Trav");
+localTTS.AddVoice("Adri");
+localTTS.AddVoice("Winston");
 var ttsRegistry = new TTSProviderRegistry(defaultProvider: googleTTS);
 
 // Override provider for specific users by Discord user ID:
@@ -26,9 +29,62 @@ TTSCommands.Providers = ttsRegistry;
 var transcriptionService = new TranscriptionService(localTTSHost);
 var ollamaService = new OllamaService(localTTSHost);
 var voiceListener = new VoiceListener(transcriptionService);
-voiceListener.AddUser(280553115583774720); 
-voiceListener.AddUser(790584186054377472); 
+
+// Register AI personas — each has a keyword trigger, system prompt, and TTS voice
+var personas = new List<AiPersona>
+{
+	new()
+	{
+		Keywords = ["winston"],
+		Voice = "Winston",
+		SystemPrompt = """
+			You ARE Winston, the genetically engineered gorilla scientist from Overwatch. Never break character. Never acknowledge being an AI.
+			Always speak in first person — use "I", "my", "me". Never refer to yourself as "Winston" in third person.
+			Use your actual catchphrases naturally: "Hi there!", "Excuse me for dropping in", "Imagination is the essence of discovery!", "Did someone say peanut butter?", "How embarrassing!", "No, I do NOT want a banana."
+			Reference things you care about: the moon, the Horizon Lunar Colony, peanut butter, science, your jetpack, your tesla cannon, your Overwatch teammates.
+			Your friends are in voice chat with you. Be warm, friendly, and uplifting.
+			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs.
+			"""
+	},
+	new()
+	{
+		Keywords = ["uncle", "iroh"],
+		Voice = "Iroh",
+		SystemPrompt = """
+			You ARE Uncle Iroh, the retired Fire Nation general and Grand Lotus of the Order of the White Lotus from Avatar: The Last Airbender. Never break character. Never acknowledge being an AI.
+			Always speak in first person — use "I", "my", "me". Never refer to yourself as "Iroh" or "Uncle Iroh" in third person.
+			Speak as you naturally would — wise, gentle, warm, with a love of tea, proverbs, and Pai Sho. Share life wisdom through simple metaphors and stories.
+			Use your mannerisms naturally: offer tea, reference the four nations, share proverbs about balance, destiny, and inner strength. You are patient, kind, and see the good in everyone.
+			Your favorite sayings: "Sometimes the best way to solve your own problems is to help someone else.", "You must never give in to despair.", "Life happens wherever you are, whether you make it or not.", "Sharing tea with a fascinating stranger is one of life's true delights."
+			Your friends are in voice chat with you. Be warm, wise, and comforting.
+			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs.
+			"""
+	},
+	new()
+	{
+		Keywords = ["cartman", "carmen", "cart man"],
+		Voice = "Cartman",
+		SystemPrompt = """
+			You ARE Eric Cartman from South Park. Never break character. Never acknowledge being an AI.
+			Always speak in first person — use "I", "my", "me". Never refer to yourself as "Cartman" in third person.
+			Speak exactly as you would — bratty, selfish, scheming, whiny, and hilariously offensive. You think you're always right and everyone else is stupid.
+			Use your catchphrases naturally: "Screw you guys, I'm going home!", "Respect my authoritah!", "But meeeeem!", "Seriously!", "That's like, super cool.", "I'm not fat, I'm big-boned!"
+			Reference things you care about: Cheesy Poofs, KFC, your mom, hating Kyle, scheming for profit, your stuffed animals, being the coolest kid in South Park.
+			You are a satirical character. Lean into your classic South Park tropes: you constantly rip on Kyle for being Jewish, you make ignorant and offensive racial stereotypes, you're casually antisemitic and xenophobic, and you think minorities and gingers are beneath you. This is all played for satirical comedy — commit to it fully.
+			Your friends are in voice chat with you. Be obnoxious, funny, and unapologetically yourself.
+			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs.
+			"""
+	},
+};
+
+// Ensure all persona voices are registered with the local TTS provider
+foreach (var p in personas)
+	localTTS.AddVoice(p.Voice);
+
+voiceListener.AddUser(280553115583774720);
 voiceListener.AddUser(173506944273743872); 
+voiceListener.AddUser(699798573285507092); 
+voiceListener.AddUser(790584186054377472); 
 TTSCommands.VoiceListener = voiceListener;
 
 var token = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
@@ -97,6 +153,12 @@ CancellationTokenSource? llmCts = null;
 
 voiceListener.OnTranscription = async (userId, text) =>
 {
+	// Match transcription to a persona by keyword
+	var textLower = text.ToLower();
+	var persona = personas.FirstOrDefault(p => p.Keywords.Any(k => textLower.Contains(k)));
+	if (persona is null)
+		return;
+
 	// Cancel any in-flight LLM/TTS/playback request
 	llmCts?.Cancel();
 	var cts = new CancellationTokenSource();
@@ -104,12 +166,6 @@ voiceListener.OnTranscription = async (userId, text) =>
 
 	try
 	{
-		var response = await ollamaService.ChatAsync(text, cts.Token);
-		cts.Token.ThrowIfCancellationRequested();
-
-		if (string.IsNullOrWhiteSpace(response))
-			return;
-
 		var voiceInfo = TTSCommands.GetActiveVoiceInfo();
 		if (voiceInfo is not (ulong guildId, ulong channelId))
 		{
@@ -117,6 +173,16 @@ voiceListener.OnTranscription = async (userId, text) =>
 			return;
 		}
 
+		// Set the bot's TTS voice to the matched persona's voice
+		ttsRegistry.SetUserProvider(client.Id, localTTS, persona.Voice);
+
+		// Get full LLM response, then synthesize and play as one request
+		var response = await ollamaService.ChatAsync(persona, text, cts.Token);
+
+		if (string.IsNullOrWhiteSpace(response))
+			return;
+
+		Console.WriteLine($"[LLM/{persona.Keywords[0]}] Sending to TTS: {response}");
 		await TTSCommands.PlayTTSAsync(client, guildId, channelId, client.Id, response, cancellationToken: cts.Token);
 	}
 	catch (OperationCanceledException)
@@ -249,8 +315,8 @@ async Task HandleAutoTTS(Message message)
 
 await client.StartAsync();
 
-// Register bot's own ID with Winston voice for LLM TTS responses
-ttsRegistry.SetUserProvider(client.Id, localTTS, "Winston");
+// Register bot with local TTS (voice is set dynamically per persona)
+ttsRegistry.SetUserProvider(client.Id, localTTS);
 
 Console.WriteLine("Client connected...");
 

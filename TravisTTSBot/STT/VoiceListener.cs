@@ -15,7 +15,7 @@ namespace DiscordTTSBot.STT
 		private const int MinBufferBytes = 19200;
 		// 20ms frame at 48kHz stereo = 960 samples/channel * 2 channels * 2 bytes
 		private const int MaxPcmFrameBytes = 960 * 2 * 2;
-		private static readonly TimeSpan SilenceThreshold = TimeSpan.FromSeconds(2.5);
+		private static readonly TimeSpan SilenceThreshold = TimeSpan.FromSeconds(0.8);
 
 		/// <summary>
 		/// Called when a user's speech has been transcribed.
@@ -149,7 +149,7 @@ namespace DiscordTTSBot.STT
 						if (!string.IsNullOrWhiteSpace(text))
 						{
 							Console.WriteLine($"[STT] User {userId}: {text}");
-							if (text == " Thank you." || !text.ToLower().Contains("winston"))
+							if (text.Trim() == "Thank you.")
 								return;
 
 							if (OnTranscription is not null)

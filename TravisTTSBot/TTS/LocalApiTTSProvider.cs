@@ -6,7 +6,7 @@ namespace DiscordTTSBot.TTS
 	{
 		private readonly HttpClient _httpClient;
 		private readonly string _baseUrl;
-		private readonly string _voiceRefDir;
+		private readonly List<string> _availableVoices = new();
 		private bool _healthy;
 		private bool _wokenUp;
 
@@ -21,14 +21,19 @@ namespace DiscordTTSBot.TTS
 			_wokenUp = false;
 		}
 
-		public LocalApiTTSProvider(string baseUrl = "http://192.168.1.67:8880", string voiceRefDir = "VoiceRefs")
+		public LocalApiTTSProvider(string baseUrl = "http://192.168.1.67:8880")
 		{
 			_baseUrl = baseUrl.TrimEnd('/');
-			_voiceRefDir = Path.GetFullPath(voiceRefDir);
 			_httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+		}
 
-			if (!Directory.Exists(_voiceRefDir))
-				Directory.CreateDirectory(_voiceRefDir);
+		/// <summary>
+		/// Registers a voice name that this provider supports.
+		/// </summary>
+		public void AddVoice(string voice)
+		{
+			if (!_availableVoices.Contains(voice, StringComparer.OrdinalIgnoreCase))
+				_availableVoices.Add(voice);
 		}
 
 		public async Task WaitForHealthyAsync(CancellationToken cancellationToken = default)
@@ -73,26 +78,12 @@ namespace DiscordTTSBot.TTS
 			if (!_healthy)
 				await WaitForHealthyAsync(cancellationToken);
 
-			if (!IsValidVoice(voice))
-				voice = DefaultVoice;
-
-			var refAudioPath = GetRefAudioPath(voice);
-			if (refAudioPath is null)
-				throw new InvalidOperationException($"No reference audio found for voice '{voice}'");
-
-			var refAudioBytes = await File.ReadAllBytesAsync(refAudioPath, cancellationToken);
-			var refAudioBase64 = Convert.ToBase64String(refAudioBytes);
-
-			var refTextPath = Path.Combine(_voiceRefDir, Path.GetFileNameWithoutExtension(refAudioPath) + ".txt");
-			var refText = File.Exists(refTextPath) ? await File.ReadAllTextAsync(refTextPath, cancellationToken) : null;
-
 			using var requestClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-			var response = await requestClient.PostAsJsonAsync($"{_baseUrl}/v1/audio/voice-clone", new
+			var response = await requestClient.PostAsJsonAsync($"{_baseUrl}/v1/audio/speech", new
 			{
+				model = "qwen3-tts",
 				input = text,
-				ref_audio = refAudioBase64,
-				ref_text = refText,
-				x_vector_only_mode = refText is null,
+				voice,
 				response_format = "mp3",
 				speed = 1.0
 			}, cancellationToken);
@@ -105,33 +96,9 @@ namespace DiscordTTSBot.TTS
 			return stream;
 		}
 
-		public bool IsValidVoice(string voice) => GetRefAudioPath(voice) is not null;
+		public bool IsValidVoice(string voice) =>
+			_availableVoices.Contains(voice, StringComparer.OrdinalIgnoreCase);
 
-		public IReadOnlyList<string> GetAvailableVoices()
-		{
-			if (!Directory.Exists(_voiceRefDir))
-				return [];
-
-			return Directory.GetFiles(_voiceRefDir)
-				.Where(f => IsAudioFile(f))
-				.Select(f => Path.GetFileNameWithoutExtension(f))
-				.ToList();
-		}
-
-		private string? GetRefAudioPath(string voice)
-		{
-			if (!Directory.Exists(_voiceRefDir))
-				return null;
-
-			return Directory.GetFiles(_voiceRefDir)
-				.FirstOrDefault(f => IsAudioFile(f)
-					&& string.Equals(Path.GetFileNameWithoutExtension(f), voice, StringComparison.OrdinalIgnoreCase));
-		}
-
-		private static bool IsAudioFile(string path)
-		{
-			var ext = Path.GetExtension(path).ToLowerInvariant();
-			return ext is ".wav" or ".mp3" or ".flac" or ".ogg" or ".opus";
-		}
+		public IReadOnlyList<string> GetAvailableVoices() => _availableVoices;
 	}
 }

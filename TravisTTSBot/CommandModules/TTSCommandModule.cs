@@ -108,6 +108,44 @@ namespace TTSBot.Modules
 			}
 		}
 
+		/// <summary>
+		/// Ensures a voice client exists for the guild/channel, creating one if needed.
+		/// Must be called while holding _voiceLock.
+		/// </summary>
+		private static async Task<VoiceClient> EnsureVoiceClientAsync(GatewayClient client, ulong guildId, ulong channelId)
+		{
+			if (_voiceClients.TryGetValue(guildId, out var existingClient)
+				&& existingClient.ChannelId == channelId)
+				return existingClient;
+
+			if (existingClient is not null)
+			{
+				existingClient.Dispose();
+				_voiceClients.Remove(guildId);
+			}
+
+			var voiceConfig = VoiceListener is not null
+				? new VoiceClientConfiguration { ReceiveHandler = new VoiceReceiveHandler() }
+				: null;
+
+			var voiceClient = await client.JoinVoiceChannelAsync(guildId, channelId, voiceConfig);
+			try { await voiceClient.StartAsync(); }
+			catch (Exception ex) { Console.WriteLine($"An error occured: {ex.Message}"); }
+
+			if (VoiceListener is VoiceListener listener)
+			{
+				Console.WriteLine("[STT] Voice receiving enabled, listening for audio...");
+				voiceClient.VoiceReceive += args =>
+				{
+					listener.OnVoiceReceive(voiceClient, args);
+					return default;
+				};
+			}
+
+			_voiceClients[guildId] = voiceClient;
+			return voiceClient;
+		}
+
 		public static async Task PlayTTSAsync(GatewayClient client, ulong guildId, ulong channelId, ulong userId, string words, ulong? textChannelId = null, CancellationToken cancellationToken = default)
 		{
 			Console.WriteLine($"Received tts command from user. Input: {words}");
@@ -131,7 +169,7 @@ namespace TTSBot.Modules
 			var pcmStream = await StreamHelpers.ConvertToDiscordAudioFormat(audioStream, cancellationToken);
 			pcmStream.Position = 0;
 
-			await _voiceLock.WaitAsync(cancellationToken);
+			await _voiceLock.WaitAsync(CancellationToken.None);
 			try
 			{
 				// Reuse existing voice client if already connected to the same channel,

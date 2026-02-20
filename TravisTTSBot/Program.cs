@@ -1,4 +1,6 @@
+using DiscordTTSBot.LLM;
 using DiscordTTSBot.Static;
+using DiscordTTSBot.STT;
 using DiscordTTSBot.TTS;
 using NetCord;
 using NetCord.Gateway;
@@ -19,6 +21,15 @@ ttsRegistry.SetUserProvider(280553115583774720, localTTS, "Adri");
 ttsRegistry.SetUserProvider(790584186054377472, localTTS, "Adri");
 
 TTSCommands.Providers = ttsRegistry;
+
+// Initialize STT + LLM
+var transcriptionService = new TranscriptionService(localTTSHost);
+var ollamaService = new OllamaService(localTTSHost);
+var voiceListener = new VoiceListener(transcriptionService);
+voiceListener.AddUser(280553115583774720); 
+voiceListener.AddUser(790584186054377472); 
+voiceListener.AddUser(173506944273743872); 
+TTSCommands.VoiceListener = voiceListener;
 
 var token = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
 
@@ -77,6 +88,46 @@ var client = new GatewayClient(new BotToken(token), new GatewayClientConfigurati
 });
 
 TTSCommands.Client = client;
+
+// Register bot's voice for LLM responses (client.Id available after client creation)
+// We'll set this after StartAsync when we know the bot's ID
+
+// Wire STT → LLM → TTS pipeline
+CancellationTokenSource? llmCts = null;
+
+voiceListener.OnTranscription = async (userId, text) =>
+{
+	// Cancel any in-flight LLM/TTS/playback request
+	llmCts?.Cancel();
+	var cts = new CancellationTokenSource();
+	llmCts = cts;
+
+	try
+	{
+		var response = await ollamaService.ChatAsync(text, cts.Token);
+		cts.Token.ThrowIfCancellationRequested();
+
+		if (string.IsNullOrWhiteSpace(response))
+			return;
+
+		var voiceInfo = TTSCommands.GetActiveVoiceInfo();
+		if (voiceInfo is not (ulong guildId, ulong channelId))
+		{
+			Console.Error.WriteLine("[LLM] No active voice channel to play response in.");
+			return;
+		}
+
+		await TTSCommands.PlayTTSAsync(client, guildId, channelId, client.Id, response, cancellationToken: cts.Token);
+	}
+	catch (OperationCanceledException)
+	{
+		Console.WriteLine("[LLM] Request cancelled (new transcription arrived).");
+	}
+	catch (Exception ex)
+	{
+		Console.Error.WriteLine($"[LLM] Voice conversation error: {ex.Message}");
+	}
+};
 
 CommandService<CommandContext> commandService = new();
 commandService.AddModules(typeof(TTSCommands).Assembly);
@@ -197,6 +248,9 @@ async Task HandleAutoTTS(Message message)
 }
 
 await client.StartAsync();
+
+// Register bot's own ID with Winston voice for LLM TTS responses
+ttsRegistry.SetUserProvider(client.Id, localTTS, "Winston");
 
 Console.WriteLine("Client connected...");
 

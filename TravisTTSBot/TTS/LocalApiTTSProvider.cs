@@ -68,10 +68,10 @@ namespace DiscordTTSBot.TTS
 			}
 		}
 
-		public async Task<Stream> SynthesizeAsync(string text, string voice)
+		public async Task<Stream> SynthesizeAsync(string text, string voice, CancellationToken cancellationToken = default)
 		{
 			if (!_healthy)
-				await WaitForHealthyAsync();
+				await WaitForHealthyAsync(cancellationToken);
 
 			if (!IsValidVoice(voice))
 				voice = DefaultVoice;
@@ -80,11 +80,11 @@ namespace DiscordTTSBot.TTS
 			if (refAudioPath is null)
 				throw new InvalidOperationException($"No reference audio found for voice '{voice}'");
 
-			var refAudioBytes = await File.ReadAllBytesAsync(refAudioPath);
+			var refAudioBytes = await File.ReadAllBytesAsync(refAudioPath, cancellationToken);
 			var refAudioBase64 = Convert.ToBase64String(refAudioBytes);
 
 			var refTextPath = Path.Combine(_voiceRefDir, Path.GetFileNameWithoutExtension(refAudioPath) + ".txt");
-			var refText = File.Exists(refTextPath) ? await File.ReadAllTextAsync(refTextPath) : null;
+			var refText = File.Exists(refTextPath) ? await File.ReadAllTextAsync(refTextPath, cancellationToken) : null;
 
 			using var requestClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
 			var response = await requestClient.PostAsJsonAsync($"{_baseUrl}/v1/audio/voice-clone", new
@@ -95,12 +95,12 @@ namespace DiscordTTSBot.TTS
 				x_vector_only_mode = refText is null,
 				response_format = "mp3",
 				speed = 1.0
-			});
+			}, cancellationToken);
 
 			response.EnsureSuccessStatusCode();
 
 			var stream = new MemoryStream();
-			await response.Content.CopyToAsync(stream);
+			await response.Content.CopyToAsync(stream, cancellationToken);
 			stream.Position = 0;
 			return stream;
 		}

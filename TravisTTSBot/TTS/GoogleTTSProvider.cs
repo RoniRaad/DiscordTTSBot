@@ -26,7 +26,7 @@ namespace DiscordTTSBot.TTS
 				_client.ListVoices(new ListVoicesRequest()).Voices.Select(v => v.Name).ToList());
 		}
 
-		public async Task<Stream> SynthesizeAsync(string text, string voice)
+		public async Task<Stream> SynthesizeAsync(string text, string voice, CancellationToken cancellationToken = default)
 		{
 			var response = _client.SynthesizeSpeech(new SynthesizeSpeechRequest
 			{

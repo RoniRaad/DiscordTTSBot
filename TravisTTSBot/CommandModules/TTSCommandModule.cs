@@ -1,4 +1,5 @@
 using DiscordTTSBot.Static;
+using DiscordTTSBot.STT;
 using DiscordTTSBot.TTS;
 using NetCord.Gateway;
 using NetCord.Gateway.Voice;
@@ -58,7 +59,26 @@ namespace TTSBot.Modules
 		private static readonly SemaphoreSlim _voiceLock = new(1, 1);
 		private static readonly Dictionary<ulong, VoiceClient> _voiceClients = new();
 
+		public static VoiceListener? VoiceListener { get; set; }
 		public static Func<Task>? OnLastVoiceDisconnect { get; set; }
+
+		public static (ulong guildId, ulong channelId)? GetActiveVoiceInfo()
+		{
+			_voiceLock.Wait();
+			try
+			{
+				foreach (var (guildId, voiceClient) in _voiceClients)
+				{
+					if (voiceClient.ChannelId is ulong channelId)
+						return (guildId, channelId);
+				}
+				return null;
+			}
+			finally
+			{
+				_voiceLock.Release();
+			}
+		}
 
 		public static void DisconnectFromGuild(ulong guildId)
 		{
@@ -88,7 +108,7 @@ namespace TTSBot.Modules
 			}
 		}
 
-		public static async Task PlayTTSAsync(GatewayClient client, ulong guildId, ulong channelId, ulong userId, string words, ulong? textChannelId = null)
+		public static async Task PlayTTSAsync(GatewayClient client, ulong guildId, ulong channelId, ulong userId, string words, ulong? textChannelId = null, CancellationToken cancellationToken = default)
 		{
 			Console.WriteLine($"Received tts command from user. Input: {words}");
 
@@ -104,12 +124,14 @@ namespace TTSBot.Modules
 			}
 
 			var voice = Providers.GetVoiceOverride(userId) ?? UserSettingsHelper.GetUserVoice(userId);
-			using var audioStream = await provider.SynthesizeAsync(words, voice);
+			using var audioStream = await provider.SynthesizeAsync(words, voice, cancellationToken);
 
-			var pcmStream = await StreamHelpers.ConvertToDiscordAudioFormat(audioStream);
+			cancellationToken.ThrowIfCancellationRequested();
+
+			var pcmStream = await StreamHelpers.ConvertToDiscordAudioFormat(audioStream, cancellationToken);
 			pcmStream.Position = 0;
 
-			await _voiceLock.WaitAsync();
+			await _voiceLock.WaitAsync(cancellationToken);
 			try
 			{
 				// Reuse existing voice client if already connected to the same channel,
@@ -122,8 +144,8 @@ namespace TTSBot.Modules
 					using var voiceStream = existingClient.CreateVoiceStream();
 					using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
 
-					await pcmStream.CopyToAsync(opusStream);
-					await opusStream.FlushAsync();
+					await pcmStream.CopyToAsync(opusStream, cancellationToken);
+					await opusStream.FlushAsync(cancellationToken);
 				}
 				else
 				{
@@ -133,7 +155,11 @@ namespace TTSBot.Modules
 						_voiceClients.Remove(guildId);
 					}
 
-					var voiceClient = await client.JoinVoiceChannelAsync(guildId, channelId);
+					var voiceConfig = VoiceListener is not null
+						? new VoiceClientConfiguration { ReceiveHandler = new VoiceReceiveHandler() }
+						: null;
+
+					var voiceClient = await client.JoinVoiceChannelAsync(guildId, channelId, voiceConfig);
 					try
 					{
                         await voiceClient.StartAsync();
@@ -141,6 +167,16 @@ namespace TTSBot.Modules
 					catch(Exception ex)
 					{
 						Console.WriteLine($"An error occured: {ex.Message}");
+					}
+
+					if (VoiceListener is VoiceListener listener)
+					{
+						Console.WriteLine("[STT] Voice receiving enabled, listening for audio...");
+						voiceClient.VoiceReceive += args =>
+						{
+							listener.OnVoiceReceive(voiceClient, args);
+							return default;
+						};
 					}
 
                     await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
@@ -151,13 +187,19 @@ namespace TTSBot.Modules
 					try
 					{
 						using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
-                        await pcmStream.CopyToAsync(opusStream);
-                        await opusStream.FlushAsync();
+                        await pcmStream.CopyToAsync(opusStream, cancellationToken);
+                        await opusStream.FlushAsync(cancellationToken);
                     }
+					catch (OperationCanceledException) { throw; }
 					catch (Exception ex) {
                         Console.WriteLine($"An error occured: {ex.Message}");
                     }
 				}
+			}
+			catch (OperationCanceledException)
+			{
+				Console.WriteLine("[TTS] Playback cancelled.");
+				throw;
 			}
             catch (Exception ex)
             {

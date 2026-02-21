@@ -50,6 +50,7 @@ var personas = new List<AiPersona>
 	{
 		Keywords = ["uncle", "iroh"],
 		Voice = "Iroh",
+		SentencePauseSeconds = 1.3,
 		SystemPrompt = """
 			You ARE Uncle Iroh, the retired Fire Nation general and Grand Lotus of the Order of the White Lotus from Avatar: The Last Airbender. Never break character. Never acknowledge being an AI.
 			Always speak in first person — use "I", "my", "me". Never refer to yourself as "Iroh" or "Uncle Iroh" in third person.
@@ -64,6 +65,7 @@ var personas = new List<AiPersona>
 	{
 		Keywords = ["cartman", "carmen", "cart man", "hartman", "fartman"],
 		Voice = "Cartman",
+		SentencePauseSeconds = 0.3,
 		SystemPrompt = """
 			You ARE Eric Cartman from South Park. Never break character. Never acknowledge being an AI.
 			Always speak in first person — use "I", "my", "me". Never refer to yourself as "Cartman" in third person.
@@ -177,14 +179,113 @@ voiceListener.OnTranscription = async (userId, text) =>
 		// Set the bot's TTS voice to the matched persona's voice
 		ttsRegistry.SetUserProvider(client.Id, localTTS, persona.Voice);
 
-		// Get full LLM response, then synthesize and play as one request
-		var response = await ollamaService.ChatAsync(persona, text, cts.Token);
+		// Get full LLM response + voice instruct
+		var (response, instruct) = await ollamaService.ChatAsync(persona, text, cts.Token);
 
 		if (string.IsNullOrWhiteSpace(response))
 			return;
 
 		Console.WriteLine($"[LLM/{persona.Keywords[0]}] Sending to TTS: {response}");
-		await TTSCommands.PlayTTSAsync(client, guildId, channelId, client.Id, response, cancellationToken: cts.Token);
+
+		// Split into sentences, merging short ones (< 5 words) into the next
+		var rawSentences = System.Text.RegularExpressions.Regex
+			.Split(response, @"(?<=[.!?])\s+")
+			.Where(s => !string.IsNullOrWhiteSpace(s))
+			.ToList();
+
+		var sentences = new List<string>();
+		var carry = "";
+		foreach (var s in rawSentences)
+		{
+			carry = carry.Length > 0 ? carry + " " + s : s;
+			if (carry.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 5)
+			{
+				sentences.Add(carry);
+				carry = "";
+			}
+		}
+		if (carry.Length > 0)
+		{
+			if (sentences.Count > 0)
+				sentences[^1] += " " + carry;
+			else
+				sentences.Add(carry);
+		}
+
+		if (sentences.Count == 0)
+			return;
+
+		// Adaptive pipeline: overlap TTS synthesis with playback.
+		//
+		// Key observations from profiling:
+		//   - Synthesis time scales ~350ms per word (single request)
+		//   - Concurrent requests slow each other down (roughly +50%)
+		//   - Playback duration = pcmBytes / (48000 * 2ch * 2 bytes/sample)
+		//   - Best strategy: keep a queue of in-flight synthesis tasks,
+		//     adding new ones when playback time can absorb the cost.
+		//
+		// We maintain a queue of started-but-not-yet-played tasks.
+		// Before playback starts, we pre-buffer sentence 0 + sentence 1.
+		// After each sentence plays, we estimate whether the current
+		// playback duration left enough time to start another synthesis
+		// without causing stalls.
+
+		const double msPerWord = 350.0;
+		const double pcmBytesPerSec = 48000.0 * 2 * 2; // 48kHz, stereo, 16-bit
+
+		int WordCount(string s) => s.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+		double EstimateSynthMs(string s) => WordCount(s) * msPerWord;
+		double PlaybackSec(long pcmBytes) => pcmBytes / pcmBytesPerSec;
+
+		// Queue of in-flight synthesis tasks, indexed by sentence position
+		var queue = new Queue<(int index, Task<MemoryStream> task)>();
+		var nextToEnqueue = 0;
+
+		// Enqueue helper: starts synthesis for the next sentence
+		void EnqueueNext()
+		{
+			if (nextToEnqueue >= sentences.Count) return;
+			var idx = nextToEnqueue++;
+			queue.Enqueue((idx, TTSCommands.SynthesizeToPcmAsync(client.Id, sentences[idx], instruct, cts.Token)));
+		}
+
+		// Pre-buffer: always start sentences 0 and 1 before playback
+		EnqueueNext(); // sentence 0
+		if (sentences.Count > 1)
+			EnqueueNext(); // sentence 1
+
+		Console.WriteLine($"[Pipeline] {sentences.Count} sentences, pre-buffered {queue.Count}");
+
+		while (queue.Count > 0)
+		{
+			var (idx, task) = queue.Dequeue();
+			using var pcm = await task;
+			cts.Token.ThrowIfCancellationRequested();
+
+			var playbackMs = PlaybackSec(pcm.Length) * 1000.0;
+
+			// Ensure at least 1 sentence is always in-flight during playback
+			if (queue.Count == 0)
+				EnqueueNext();
+
+			// If playback is long enough, speculatively start one more.
+			// We compare playback time against the estimated synthesis
+			// time of the next queued sentence — if playback covers most
+			// of it, the extra concurrent request won't cause a stall.
+			if (queue.Count == 1 && nextToEnqueue < sentences.Count)
+			{
+				var nextSynthMs = EstimateSynthMs(sentences[nextToEnqueue]);
+				if (playbackMs > nextSynthMs * 0.6)
+				{
+					Console.WriteLine($"[Pipeline] Pre-fetching sentence {nextToEnqueue} " +
+						$"(playback ~{playbackMs:F0}ms, next synth ~{nextSynthMs:F0}ms)");
+					EnqueueNext();
+				}
+			}
+
+			var isLast = idx == sentences.Count - 1;
+			await TTSCommands.PlayPcmAsync(client, guildId, channelId, pcm, isLast ? 0 : persona.SentencePauseSeconds, cts.Token);
+		}
 	}
 	catch (OperationCanceledException)
 	{

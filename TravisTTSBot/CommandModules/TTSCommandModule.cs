@@ -162,88 +162,89 @@ namespace TTSBot.Modules
 			}
 
 			var voice = Providers.GetVoiceOverride(userId) ?? UserSettingsHelper.GetUserVoice(userId);
-			using var audioStream = await provider.SynthesizeAsync(words, voice, cancellationToken);
+			using var audioStream = await provider.SynthesizeAsync(words, voice, null, cancellationToken);
 
 			cancellationToken.ThrowIfCancellationRequested();
-
-			var pcmStream = await StreamHelpers.ConvertToDiscordAudioFormat(audioStream, cancellationToken);
-			pcmStream.Position = 0;
 
 			await _voiceLock.WaitAsync(CancellationToken.None);
 			try
 			{
-				// Reuse existing voice client if already connected to the same channel,
-				// otherwise dispose the old one and create a new connection
-				if (_voiceClients.TryGetValue(guildId, out var existingClient)
-					&& existingClient.ChannelId == channelId)
-				{
-					await existingClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
+				var voiceClient = await EnsureVoiceClientAsync(client, guildId, channelId);
+				await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
 
-					using var voiceStream = existingClient.CreateVoiceStream();
-					using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
+				using var voiceStream = voiceClient.CreateVoiceStream();
+				using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
 
-					await pcmStream.CopyToAsync(opusStream, cancellationToken);
-					await opusStream.FlushAsync(cancellationToken);
-				}
-				else
-				{
-					if (existingClient is not null)
-					{
-						existingClient.Dispose();
-						_voiceClients.Remove(guildId);
-					}
-
-					var voiceConfig = VoiceListener is not null
-						? new VoiceClientConfiguration { ReceiveHandler = new VoiceReceiveHandler() }
-						: null;
-
-					var voiceClient = await client.JoinVoiceChannelAsync(guildId, channelId, voiceConfig);
-					try
-					{
-                        await voiceClient.StartAsync();
-                    }
-					catch(Exception ex)
-					{
-						Console.WriteLine($"An error occured: {ex.Message}");
-					}
-
-					if (VoiceListener is VoiceListener listener)
-					{
-						Console.WriteLine("[STT] Voice receiving enabled, listening for audio...");
-						voiceClient.VoiceReceive += args =>
-						{
-							listener.OnVoiceReceive(voiceClient, args);
-							return default;
-						};
-					}
-
-                    await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
-
-					_voiceClients[guildId] = voiceClient;
-
-					using var voiceStream = voiceClient.CreateVoiceStream();
-					try
-					{
-						using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
-                        await pcmStream.CopyToAsync(opusStream, cancellationToken);
-                        await opusStream.FlushAsync(cancellationToken);
-                    }
-					catch (OperationCanceledException) { throw; }
-					catch (Exception ex) {
-                        Console.WriteLine($"An error occured: {ex.Message}");
-                    }
-				}
+				// Stream TTS audio through FFmpeg directly into the opus encoder
+				await StreamHelpers.StreamToDiscordAudioFormat(audioStream, opusStream, cancellationToken);
+				await opusStream.FlushAsync(cancellationToken);
 			}
 			catch (OperationCanceledException)
 			{
 				Console.WriteLine("[TTS] Playback cancelled.");
 				throw;
 			}
-            catch (Exception ex)
-            {
-                Console.WriteLine($"An error occured: {ex.Message}");
-            }
-            finally
+			catch (Exception ex)
+			{
+				Console.WriteLine($"An error occured: {ex.Message}");
+			}
+			finally
+			{
+				_voiceLock.Release();
+			}
+		}
+
+		/// <summary>
+		/// Synthesizes text to PCM audio (s16le stereo 48kHz) via the user's TTS provider + FFmpeg.
+		/// </summary>
+		public static async Task<MemoryStream> SynthesizeToPcmAsync(ulong userId, string text, string? instruct = null, CancellationToken cancellationToken = default)
+		{
+			var provider = Providers.GetProviderForUser(userId);
+			var voice = Providers.GetVoiceOverride(userId) ?? UserSettingsHelper.GetUserVoice(userId);
+			using var audioStream = await provider.SynthesizeAsync(text, voice, instruct, cancellationToken);
+			var pcm = await StreamHelpers.ConvertToDiscordAudioFormat(audioStream, cancellationToken);
+			pcm.Position = 0;
+			return (MemoryStream)pcm;
+		}
+
+		/// <summary>
+		/// Plays a single pre-synthesized PCM stream, optionally appending silence between sentences.
+		/// </summary>
+		public static async Task PlayPcmAsync(GatewayClient client, ulong guildId, ulong channelId, MemoryStream pcmStream, double pauseSeconds = 0, CancellationToken cancellationToken = default)
+		{
+			pcmStream.Position = 0;
+
+			await _voiceLock.WaitAsync(CancellationToken.None);
+			try
+			{
+				var voiceClient = await EnsureVoiceClientAsync(client, guildId, channelId);
+				await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
+
+				using var voiceStream = voiceClient.CreateVoiceStream();
+				using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
+
+				await pcmStream.CopyToAsync(opusStream, cancellationToken);
+
+				// Insert silence gap between sentences
+				if (pauseSeconds > 0)
+				{
+					var silenceBytes = (int)(48000 * 2 * 2 * pauseSeconds);
+					var silence = new byte[silenceBytes];
+					await opusStream.WriteAsync(silence, cancellationToken);
+				}
+
+				await opusStream.FlushAsync(cancellationToken);
+			}
+			catch (OperationCanceledException)
+			{
+				Console.WriteLine("[TTS] Playback cancelled.");
+				throw;
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine($"An error occured: {ex.Message}");
+			}
+			finally
 			{
 				_voiceLock.Release();
 			}

@@ -19,13 +19,15 @@ namespace DiscordTTSBot.LLM
 
 		/// <summary>
 		/// Sends a message to Ollama using the given persona's system prompt and
-		/// conversation history, returning the full response as a cleaned string.
+		/// conversation history, returning the response text and a TTS voice instruct.
 		/// </summary>
-		public async Task<string> ChatAsync(AiPersona persona, string userMessage, CancellationToken cancellationToken = default)
+		public async Task<(string Text, string? Instruct)> ChatAsync(AiPersona persona, string userMessage, CancellationToken cancellationToken = default)
 		{
 			// Initialize history with system prompt on first use
 			if (persona.History.Count == 0)
+			{
 				persona.History.Add(new AiPersona.ChatMessage("system", persona.SystemPrompt));
+			}
 
 			persona.History.Add(new AiPersona.ChatMessage("user", userMessage));
 
@@ -62,12 +64,22 @@ namespace DiscordTTSBot.LLM
 				.GetString() ?? "";
 
 			var content = ThinkTagRegex().Replace(rawContent, "").Trim();
+
+			// Extract [VOICE: ...] instruct tag before cleaning
+			string? instruct = null;
+
 			content = CleanText(content);
 
 			Console.WriteLine($"[LLM/{persona.Keywords[0]}] Response: {content}");
+			if (instruct is not null)
+				Console.WriteLine($"[LLM/{persona.Keywords[0]}] Voice instruct: {instruct}");
+
 			persona.History.Add(new AiPersona.ChatMessage("assistant", content));
-			return content;
+			return (content, instruct);
 		}
+
+		[GeneratedRegex(@"\[VOICE:\s*([^\]]+)\]", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+		private static partial Regex VoiceTagRegex();
 
 		private static string CleanText(string text)
 		{

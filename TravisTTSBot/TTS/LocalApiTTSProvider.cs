@@ -56,7 +56,7 @@ namespace DiscordTTSBot.TTS
 				{
 					using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 					cts.CancelAfter(TimeSpan.FromSeconds(2));
-					var response = await _httpClient.GetAsync($"{_baseUrl}/v1/models", cts.Token);
+					var response = await _httpClient.GetAsync($"{_baseUrl}/health", cts.Token);
 					if (response.IsSuccessStatusCode)
 					{
 						_healthy = true;
@@ -73,19 +73,22 @@ namespace DiscordTTSBot.TTS
 			}
 		}
 
-		public async Task<Stream> SynthesizeAsync(string text, string voice, CancellationToken cancellationToken = default)
+		public async Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, CancellationToken cancellationToken = default)
 		{
 			if (!_healthy)
 				await WaitForHealthyAsync(cancellationToken);
 
+			Console.WriteLine($"[TTS] Requesting synthesis: \"{text}\" (voice: {voice}, instruct: {instruct ?? "none"})");
+			var sw = System.Diagnostics.Stopwatch.StartNew();
+
 			using var requestClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-			var response = await requestClient.PostAsJsonAsync($"{_baseUrl}/v1/audio/speech", new
+			using var response = await requestClient.PostAsJsonAsync($"{_baseUrl}/v1/audio/speech", new
 			{
 				model = "qwen3-tts",
 				input = text,
 				voice,
 				response_format = "mp3",
-				speed = 1.0
+				speed = 1 // remove instruct because it was causing issues with synthesis
 			}, cancellationToken);
 
 			response.EnsureSuccessStatusCode();
@@ -93,6 +96,8 @@ namespace DiscordTTSBot.TTS
 			var stream = new MemoryStream();
 			await response.Content.CopyToAsync(stream, cancellationToken);
 			stream.Position = 0;
+
+			Console.WriteLine($"[TTS] Received {stream.Length} bytes in {sw.ElapsedMilliseconds}ms for: \"{text}\"");
 			return stream;
 		}
 

@@ -269,7 +269,14 @@ namespace TTSBot.Modules
 			GatewayClient client, ulong guildId, ulong channelId,
 			CancellationToken cancellationToken = default)
 		{
-			await _voiceLock.WaitAsync(CancellationToken.None);
+			// Use a timeout to prevent deadlocks if the lock is stuck
+			if (!await _voiceLock.WaitAsync(TimeSpan.FromSeconds(30)))
+			{
+				Console.Error.WriteLine("[TTS] Voice lock acquisition timed out (30s) — possible deadlock. Forcing release.");
+				try { _voiceLock.Release(); } catch { }
+				await _voiceLock.WaitAsync(CancellationToken.None);
+			}
+
 			try
 			{
 				var voiceClient = await EnsureVoiceClientAsync(client, guildId, channelId);
@@ -349,9 +356,17 @@ namespace TTSBot.Modules
 
 				try
 				{
-					await _opusStream.FlushAsync();
-					_opusStream.Dispose();
-					_voiceStream.Dispose();
+					try
+					{
+						await _opusStream.FlushAsync();
+					}
+					catch (Exception ex)
+					{
+						Console.Error.WriteLine($"[TTS] FlushAsync failed during session dispose: {ex.Message}");
+					}
+
+					try { _opusStream.Dispose(); } catch { }
+					try { _voiceStream.Dispose(); } catch { }
 				}
 				finally
 				{

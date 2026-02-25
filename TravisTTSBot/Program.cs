@@ -161,6 +161,7 @@ voiceListener.OnTranscription = async (userId, text) =>
 		return;
 
 	// Cancel any in-flight LLM/TTS/playback request
+	TTSCommands.TouchActivity();
 	llmCts?.Cancel();
 	var cts = new CancellationTokenSource();
 	llmCts = cts;
@@ -427,6 +428,8 @@ Console.WriteLine("Client connected...");
 
 // Background watchdog: runs every 60 seconds to ensure the bot doesn't
 // stay in a voice channel alone, and renews/releases reservations as needed.
+// Also disconnects after an idle timeout if nobody uses the bot.
+var idleTimeoutMinutes = int.Parse(Environment.GetEnvironmentVariable("IDLE_TIMEOUT_MINUTES") ?? "10");
 _ = Task.Run(async () =>
 {
 	while (true)
@@ -436,6 +439,7 @@ _ = Task.Run(async () =>
 		try
 		{
 			var botId = client.Id;
+			var guildsToDisconnect = new List<ulong>();
 
 			// Check every guild for voice channels where the bot is alone
 			foreach (var (guildId, guild) in client.Cache.Guilds)
@@ -452,9 +456,27 @@ _ = Task.Run(async () =>
 				if (othersInChannel == 0)
 				{
 					Console.WriteLine($"[Watchdog] Bot is alone in voice channel {botChannelId} (guild {guildId}), disconnecting...");
-					TTSCommands.DisconnectFromGuild(guildId);
+					guildsToDisconnect.Add(guildId);
 				}
 			}
+
+			// Idle timeout: if the bot is in voice but hasn't been used recently, disconnect
+			if (guildsToDisconnect.Count == 0)
+			{
+				var idleFor = DateTime.UtcNow - TTSCommands.LastActivityUtc;
+				if (idleFor.TotalMinutes >= idleTimeoutMinutes && TTSCommands.GetActiveVoiceInfo() is not null)
+				{
+					Console.WriteLine($"[Watchdog] Bot idle for {idleFor.TotalMinutes:F0} minutes (threshold: {idleTimeoutMinutes}), disconnecting from all voice channels...");
+					foreach (var (guildId, guild) in client.Cache.Guilds)
+					{
+						if (guild.VoiceStates.ContainsKey(botId))
+							guildsToDisconnect.Add(guildId);
+					}
+				}
+			}
+
+			foreach (var guildId in guildsToDisconnect)
+				TTSCommands.DisconnectFromGuild(guildId);
 
 			// Reservation management: renew if we're in voice, release if not
 			if (reservationClient is not null)

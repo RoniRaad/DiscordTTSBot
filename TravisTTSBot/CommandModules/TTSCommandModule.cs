@@ -62,6 +62,14 @@ namespace TTSBot.Modules
 		public static VoiceListener? VoiceListener { get; set; }
 		public static Func<Task>? OnLastVoiceDisconnect { get; set; }
 
+		/// <summary>
+		/// Updated whenever the bot is actively used (TTS, LLM response, etc.).
+		/// Used by the watchdog to detect idle timeout.
+		/// </summary>
+		public static DateTime LastActivityUtc { get; set; } = DateTime.UtcNow;
+
+		public static void TouchActivity() => LastActivityUtc = DateTime.UtcNow;
+
 		public static (ulong guildId, ulong channelId)? GetActiveVoiceInfo()
 		{
 			_voiceLock.Wait();
@@ -148,6 +156,7 @@ namespace TTSBot.Modules
 
 		public static async Task PlayTTSAsync(GatewayClient client, ulong guildId, ulong channelId, ulong userId, string words, ulong? textChannelId = null, CancellationToken cancellationToken = default)
 		{
+			TouchActivity();
 			Console.WriteLine($"Received tts command from user. Input: {words}");
 
 			var provider = Providers.GetProviderForUser(userId);

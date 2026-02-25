@@ -223,14 +223,24 @@ namespace TTSBot.Modules
 				using var voiceStream = voiceClient.CreateVoiceStream();
 				using var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
 
-				await pcmStream.CopyToAsync(opusStream, cancellationToken);
+				// Write in frame-aligned chunks for smooth pacing
+				const int chunkSize = 3840 * 10; // 10 opus frames = 200ms
+				var buffer = new byte[chunkSize];
+				int bytesRead;
+				while ((bytesRead = await pcmStream.ReadAsync(buffer, cancellationToken)) > 0)
+					await opusStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
 
-				// Insert silence gap between sentences
 				if (pauseSeconds > 0)
 				{
 					var silenceBytes = (int)(48000 * 2 * 2 * pauseSeconds);
-					var silence = new byte[silenceBytes];
-					await opusStream.WriteAsync(silence, cancellationToken);
+					var silenceBuffer = new byte[Math.Min(silenceBytes, chunkSize)];
+					var remaining = silenceBytes;
+					while (remaining > 0)
+					{
+						var toWrite = Math.Min(remaining, silenceBuffer.Length);
+						await opusStream.WriteAsync(silenceBuffer.AsMemory(0, toWrite), cancellationToken);
+						remaining -= toWrite;
+					}
 				}
 
 				await opusStream.FlushAsync(cancellationToken);
@@ -247,6 +257,106 @@ namespace TTSBot.Modules
 			finally
 			{
 				_voiceLock.Release();
+			}
+		}
+
+		/// <summary>
+		/// Opens a persistent voice/opus stream for the guild/channel.
+		/// Call PlayOnStream() to write PCM data, then DisposeStream() when done.
+		/// This avoids creating/destroying streams between sentences.
+		/// </summary>
+		public static async Task<VoicePlaybackSession> OpenPlaybackSessionAsync(
+			GatewayClient client, ulong guildId, ulong channelId,
+			CancellationToken cancellationToken = default)
+		{
+			await _voiceLock.WaitAsync(CancellationToken.None);
+			try
+			{
+				var voiceClient = await EnsureVoiceClientAsync(client, guildId, channelId);
+				await voiceClient.EnterSpeakingStateAsync(new SpeakingProperties(SpeakingFlags.Microphone));
+
+				var voiceStream = voiceClient.CreateVoiceStream();
+				var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
+
+				return new VoicePlaybackSession(voiceStream, opusStream, _voiceLock);
+			}
+			catch
+			{
+				_voiceLock.Release();
+				throw;
+			}
+		}
+
+		public sealed class VoicePlaybackSession : IAsyncDisposable
+		{
+			private readonly IDisposable _voiceStream;
+			private readonly OpusEncodeStream _opusStream;
+			private readonly SemaphoreSlim _lock;
+			private bool _disposed;
+
+			// Write in chunks of exactly 10 opus frames (10 * 20ms = 200ms).
+			// Each PCM frame at 48kHz stereo s16le = 3840 bytes.
+			// This keeps writes small enough that the SpeedNormalizingStream
+			// can pace them smoothly without building up a large backlog
+			// that causes burst/catch-up stuttering.
+			private const int FrameSize = 3840; // 20ms of PCM at 48kHz stereo s16le
+			private const int FramesPerChunk = 10;
+			private const int ChunkSize = FrameSize * FramesPerChunk; // 38400 bytes = 200ms
+
+			internal VoicePlaybackSession(IDisposable voiceStream, OpusEncodeStream opusStream, SemaphoreSlim voiceLock)
+			{
+				_voiceStream = voiceStream;
+				_opusStream = opusStream;
+				_lock = voiceLock;
+			}
+
+			/// <summary>
+			/// Writes a PCM stream to the ongoing opus stream in frame-aligned chunks,
+			/// with optional silence pause after.
+			/// </summary>
+			public async Task PlayPcmAsync(MemoryStream pcmStream, double pauseSeconds = 0, CancellationToken cancellationToken = default)
+			{
+				pcmStream.Position = 0;
+				// Write in small frame-aligned chunks so the SpeedNormalizingStream
+				// can pace output smoothly without large bursts after delays.
+				var buffer = new byte[ChunkSize];
+				int bytesRead;
+				while ((bytesRead = await pcmStream.ReadAsync(buffer, cancellationToken)) > 0)
+				{
+					await _opusStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+				}
+
+				if (pauseSeconds > 0)
+				{
+					// Write silence in chunks too, to avoid one large allocation
+					// and to keep the pacing smooth.
+					var silenceBytes = (int)(48000 * 2 * 2 * pauseSeconds);
+					var silenceBuffer = new byte[Math.Min(silenceBytes, ChunkSize)];
+					var remaining = silenceBytes;
+					while (remaining > 0)
+					{
+						var toWrite = Math.Min(remaining, silenceBuffer.Length);
+						await _opusStream.WriteAsync(silenceBuffer.AsMemory(0, toWrite), cancellationToken);
+						remaining -= toWrite;
+					}
+				}
+			}
+
+			public async ValueTask DisposeAsync()
+			{
+				if (_disposed) return;
+				_disposed = true;
+
+				try
+				{
+					await _opusStream.FlushAsync();
+					_opusStream.Dispose();
+					_voiceStream.Dispose();
+				}
+				finally
+				{
+					_lock.Release();
+				}
 			}
 		}
 	}

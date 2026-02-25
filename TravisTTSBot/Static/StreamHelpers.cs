@@ -71,7 +71,17 @@ namespace TTSBot.Static
 			var inputTask = inputStream.CopyToAsync(process.StandardInput.BaseStream, cancellationToken)
 				.ContinueWith(_ => process.StandardInput.Close(), CancellationToken.None);
 
-			var outputTask = process.StandardOutput.BaseStream.CopyToAsync(outputStream, cancellationToken);
+			// Read in frame-aligned chunks (10 opus frames = 200ms of PCM)
+			// to keep the SpeedNormalizingStream pacing smooth.
+			const int chunkSize = 3840 * 10;
+			var buffer = new byte[chunkSize];
+			var outputTask = Task.Run(async () =>
+			{
+				var ffmpegOut = process.StandardOutput.BaseStream;
+				int bytesRead;
+				while ((bytesRead = await ffmpegOut.ReadAsync(buffer, cancellationToken)) > 0)
+					await outputStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+			}, cancellationToken);
 
 			await Task.WhenAll(process.WaitForExitAsync(cancellationToken), inputTask, outputTask);
 

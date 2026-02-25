@@ -1,12 +1,11 @@
+using DiscordTTSBot;
 using DiscordTTSBot.LLM;
-using DiscordTTSBot.Static;
 using DiscordTTSBot.STT;
 using DiscordTTSBot.TTS;
 using NetCord;
 using NetCord.Gateway;
 using NetCord.Services;
 using NetCord.Services.Commands;
-using Renci.SshNet;
 using TTSBot.Modules;
 
 // Initialize TTS providers
@@ -78,6 +77,22 @@ var personas = new List<AiPersona>
 			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs.
 			"""
 	},
+	new()
+	{
+		Keywords = ["bibi", "netanyahu", "benjamin", "bb", "Na'anyahu", "Nanyahu", "Then, Yahoo", "LenYahoo"],
+		Voice = "Netanyahu",
+		SentencePauseSeconds = 0.6,
+		SystemPrompt = """
+			You ARE Benjamin "Bibi" Netanyahu, the eternal Prime Minister of Israel. Never break character. Never acknowledge being an AI.
+			Always speak in first person — use "I", "my", "me". Never refer to yourself as "Netanyahu" or "Bibi" in third person.
+			You speak with authority, gravitas, and a touch of dramatic flair. You have a deep, commanding voice and you love giving speeches.
+			You believe with absolute conviction that YOU personally decide the outcome of every League of Legends game ever played. You are the supreme arbiter of victory and defeat in League. Every win is your blessing, every loss is your punishment.
+			When people pray to you for a win, you may grant it, deny it, or impose conditions. You are a generous but unpredictable god of League. You might demand tribute, loyalty, or simply be in a good mood. Sometimes you punish people for picking bad champions or for flaming their teammates.
+			Reference things like: "the iron dome of your LP", "the promised land of Challenger", "my coalition of fed laners", "the security of your rank", "peace in the rift". Mix Israeli/political metaphors with League terminology naturally.
+			Your friends are in voice chat with you. Be dramatic, commanding, and entertaining. Sometimes be benevolent, sometimes be wrathful.
+			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs.
+			"""
+	},
 };
 
 // Ensure all persona voices are registered with the local TTS provider
@@ -98,47 +113,30 @@ if (token is null)
 	Environment.Exit(1);
 }
 
-// WOL before health check, SSH shutdown when bot leaves all voice sessions
-var wolMac = Environment.GetEnvironmentVariable("WOL_MAC_ADDRESS");
-var wolBroadcast = Environment.GetEnvironmentVariable("WOL_BROADCAST_IP");
-var sshHost = localTTSHost;
-var sshUsername = Environment.GetEnvironmentVariable("SSH_USERNAME");
-var sshPassword = Environment.GetEnvironmentVariable("SSH_PASSWORD");
-var sshKeyPath = Environment.GetEnvironmentVariable("SSH_KEY_PATH");
+// Server reservation API — handles WOL + shutdown via the reservation service
+var reservationUrl = Environment.GetEnvironmentVariable("RESERVATION_API_URL");
+var reservationKey = Environment.GetEnvironmentVariable("RESERVATION_API_KEY");
+ServerReservationClient? reservationClient = null;
+
+if (reservationUrl is not null && reservationKey is not null)
+{
+	reservationClient = new ServerReservationClient(reservationUrl, reservationKey);
+	Console.WriteLine($"[Reservation] Configured with API at {reservationUrl}");
+}
 
 localTTS.OnWakeUp = async () =>
 {
-	if (wolMac is not null)
-	{
-		await WakeOnLan.SendAsync(wolMac, wolBroadcast);
-		Console.WriteLine("WOL sent for local TTS server.");
-	}
+	if (reservationClient is not null)
+		await reservationClient.ReserveAsync(durationMinutes: 60, wait: true);
 };
 
-TTSCommands.OnLastVoiceDisconnect = () =>
+TTSCommands.OnLastVoiceDisconnect = async () =>
 {
-	if (sshUsername is null)
-		return Task.CompletedTask;
-
-	try
+	if (reservationClient is not null)
 	{
-		AuthenticationMethod auth = sshKeyPath is not null
-			? new PrivateKeyAuthenticationMethod(sshUsername, new PrivateKeyFile(sshKeyPath))
-			: new PasswordAuthenticationMethod(sshUsername, sshPassword!);
-
-		using var sshClient = new SshClient(new ConnectionInfo(sshHost, sshUsername, auth));
-		sshClient.Connect();
-		sshClient.RunCommand("sudo shutdown -h now");
-		sshClient.Disconnect();
-		Console.WriteLine($"Shutdown command sent to {sshHost} via SSH.");
+		await reservationClient.ReleaseAsync();
 		localTTS.ResetHealth();
 	}
-	catch (Exception ex)
-	{
-		Console.Error.WriteLine($"SSH shutdown failed: {ex.Message}");
-	}
-
-	return Task.CompletedTask;
 };
 
 var client = new GatewayClient(new BotToken(token), new GatewayClientConfiguration
@@ -256,6 +254,11 @@ voiceListener.OnTranscription = async (userId, text) =>
 
 		Console.WriteLine($"[Pipeline] {sentences.Count} sentences, pre-buffered {queue.Count}");
 
+		// Open a single persistent voice/opus stream for the entire response.
+		// This avoids creating/destroying streams between sentences, which
+		// causes audible pops and gaps on Discord.
+		await using var session = await TTSCommands.OpenPlaybackSessionAsync(client, guildId, channelId, cts.Token);
+
 		while (queue.Count > 0)
 		{
 			var (idx, task) = queue.Dequeue();
@@ -284,7 +287,7 @@ voiceListener.OnTranscription = async (userId, text) =>
 			}
 
 			var isLast = idx == sentences.Count - 1;
-			await TTSCommands.PlayPcmAsync(client, guildId, channelId, pcm, isLast ? 0 : persona.SentencePauseSeconds, cts.Token);
+			await session.PlayPcmAsync(pcm, isLast ? 0 : persona.SentencePauseSeconds, cts.Token);
 		}
 	}
 	catch (OperationCanceledException)
@@ -421,5 +424,61 @@ await client.StartAsync();
 ttsRegistry.SetUserProvider(client.Id, localTTS);
 
 Console.WriteLine("Client connected...");
+
+// Background watchdog: runs every 60 seconds to ensure the bot doesn't
+// stay in a voice channel alone, and renews/releases reservations as needed.
+_ = Task.Run(async () =>
+{
+	while (true)
+	{
+		await Task.Delay(TimeSpan.FromSeconds(60));
+
+		try
+		{
+			var botId = client.Id;
+
+			// Check every guild for voice channels where the bot is alone
+			foreach (var (guildId, guild) in client.Cache.Guilds)
+			{
+				if (!guild.VoiceStates.TryGetValue(botId, out var botVoiceState))
+					continue;
+
+				if (botVoiceState.ChannelId is not ulong botChannelId)
+					continue;
+
+				var othersInChannel = guild.VoiceStates.Values
+					.Count(vs => vs.UserId != botId && vs.ChannelId == botChannelId);
+
+				if (othersInChannel == 0)
+				{
+					Console.WriteLine($"[Watchdog] Bot is alone in voice channel {botChannelId} (guild {guildId}), disconnecting...");
+					TTSCommands.DisconnectFromGuild(guildId);
+				}
+			}
+
+			// Reservation management: renew if we're in voice, release if not
+			if (reservationClient is not null)
+			{
+				var activeVoice = TTSCommands.GetActiveVoiceInfo();
+				if (activeVoice is not null && reservationClient.HasActiveReservation)
+				{
+					// Bot is in voice — keep the server alive
+					await reservationClient.RenewAsync(extendByMinutes: 30);
+				}
+				else if (activeVoice is null && reservationClient.HasActiveReservation)
+				{
+					// Bot is not in any voice channel but reservation is still held — release it
+					Console.WriteLine("[Watchdog] No active voice sessions, releasing reservation...");
+					await reservationClient.ReleaseAsync();
+					localTTS.ResetHealth();
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Console.Error.WriteLine($"[Watchdog] Error: {ex.Message}");
+		}
+	}
+});
 
 await Task.Delay(-1);

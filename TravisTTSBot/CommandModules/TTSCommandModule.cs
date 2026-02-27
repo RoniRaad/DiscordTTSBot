@@ -70,9 +70,9 @@ namespace TTSBot.Modules
 
 		public static void TouchActivity() => LastActivityUtc = DateTime.UtcNow;
 
-		public static (ulong guildId, ulong channelId)? GetActiveVoiceInfo()
+		public static async Task<(ulong guildId, ulong channelId)?> GetActiveVoiceInfoAsync()
 		{
-			_voiceLock.Wait();
+			await _voiceLock.WaitAsync();
 			try
 			{
 				foreach (var (guildId, voiceClient) in _voiceClients)
@@ -88,9 +88,9 @@ namespace TTSBot.Modules
 			}
 		}
 
-		public static void DisconnectFromGuild(ulong guildId)
+		public static async Task DisconnectFromGuildAsync(ulong guildId)
 		{
-			_voiceLock.Wait();
+			await _voiceLock.WaitAsync();
 			try
 			{
 				if (_voiceClients.Remove(guildId, out var voiceClient))
@@ -113,6 +113,20 @@ namespace TTSBot.Modules
 			finally
 			{
 				_voiceLock.Release();
+			}
+		}
+
+		/// <summary>
+		/// Invalidates (disposes) the cached voice client for a guild.
+		/// Must be called while holding _voiceLock.
+		/// The next call to EnsureVoiceClientAsync will create a fresh connection.
+		/// </summary>
+		private static void InvalidateVoiceClient(ulong guildId)
+		{
+			if (_voiceClients.Remove(guildId, out var voiceClient))
+			{
+				Console.WriteLine($"[TTS] Invalidating stale voice client for guild {guildId}");
+				try { voiceClient.Dispose(); } catch { }
 			}
 		}
 
@@ -279,11 +293,12 @@ namespace TTSBot.Modules
 			CancellationToken cancellationToken = default)
 		{
 			// Use a timeout to prevent deadlocks if the lock is stuck
-			if (!await _voiceLock.WaitAsync(TimeSpan.FromSeconds(30)))
+			if (!await _voiceLock.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken))
 			{
 				Console.Error.WriteLine("[TTS] Voice lock acquisition timed out (30s) — possible deadlock. Forcing release.");
 				try { _voiceLock.Release(); } catch { }
-				await _voiceLock.WaitAsync(CancellationToken.None);
+				if (!await _voiceLock.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken))
+					throw new TimeoutException("Failed to acquire voice lock after forced release.");
 			}
 
 			try
@@ -294,7 +309,7 @@ namespace TTSBot.Modules
 				var voiceStream = voiceClient.CreateVoiceStream();
 				var opusStream = new OpusEncodeStream(voiceStream, PcmFormat.Short, VoiceChannels.Stereo, OpusApplication.Voip);
 
-				return new VoicePlaybackSession(voiceStream, opusStream, _voiceLock);
+				return new VoicePlaybackSession(voiceStream, opusStream, _voiceLock, guildId);
 			}
 			catch
 			{
@@ -308,7 +323,9 @@ namespace TTSBot.Modules
 			private readonly IDisposable _voiceStream;
 			private readonly OpusEncodeStream _opusStream;
 			private readonly SemaphoreSlim _lock;
+			private readonly ulong _guildId;
 			private bool _disposed;
+			private bool _streamFailed;
 
 			// Write in chunks of exactly 10 opus frames (10 * 20ms = 200ms).
 			// Each PCM frame at 48kHz stereo s16le = 3840 bytes.
@@ -319,11 +336,12 @@ namespace TTSBot.Modules
 			private const int FramesPerChunk = 10;
 			private const int ChunkSize = FrameSize * FramesPerChunk; // 38400 bytes = 200ms
 
-			internal VoicePlaybackSession(IDisposable voiceStream, OpusEncodeStream opusStream, SemaphoreSlim voiceLock)
+			internal VoicePlaybackSession(IDisposable voiceStream, OpusEncodeStream opusStream, SemaphoreSlim voiceLock, ulong guildId)
 			{
 				_voiceStream = voiceStream;
 				_opusStream = opusStream;
 				_lock = voiceLock;
+				_guildId = guildId;
 			}
 
 			/// <summary>
@@ -333,28 +351,39 @@ namespace TTSBot.Modules
 			public async Task PlayPcmAsync(MemoryStream pcmStream, double pauseSeconds = 0, CancellationToken cancellationToken = default)
 			{
 				pcmStream.Position = 0;
-				// Write in small frame-aligned chunks so the SpeedNormalizingStream
-				// can pace output smoothly without large bursts after delays.
-				var buffer = new byte[ChunkSize];
-				int bytesRead;
-				while ((bytesRead = await pcmStream.ReadAsync(buffer, cancellationToken)) > 0)
+				try
 				{
-					await _opusStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
-				}
-
-				if (pauseSeconds > 0)
-				{
-					// Write silence in chunks too, to avoid one large allocation
-					// and to keep the pacing smooth.
-					var silenceBytes = (int)(48000 * 2 * 2 * pauseSeconds);
-					var silenceBuffer = new byte[Math.Min(silenceBytes, ChunkSize)];
-					var remaining = silenceBytes;
-					while (remaining > 0)
+					// Write in small frame-aligned chunks so the SpeedNormalizingStream
+					// can pace output smoothly without large bursts after delays.
+					var buffer = new byte[ChunkSize];
+					int bytesRead;
+					while ((bytesRead = await pcmStream.ReadAsync(buffer, cancellationToken)) > 0)
 					{
-						var toWrite = Math.Min(remaining, silenceBuffer.Length);
-						await _opusStream.WriteAsync(silenceBuffer.AsMemory(0, toWrite), cancellationToken);
-						remaining -= toWrite;
+						await _opusStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
 					}
+
+					if (pauseSeconds > 0)
+					{
+						// Write silence in chunks too, to avoid one large allocation
+						// and to keep the pacing smooth.
+						var silenceBytes = (int)(48000 * 2 * 2 * pauseSeconds);
+						var silenceBuffer = new byte[Math.Min(silenceBytes, ChunkSize)];
+						var remaining = silenceBytes;
+						while (remaining > 0)
+						{
+							var toWrite = Math.Min(remaining, silenceBuffer.Length);
+							await _opusStream.WriteAsync(silenceBuffer.AsMemory(0, toWrite), cancellationToken);
+							remaining -= toWrite;
+						}
+					}
+				}
+				catch (OperationCanceledException) { throw; }
+				catch
+				{
+					// Mark stream as broken (e.g. cryptographic error) so DisposeAsync
+					// invalidates the voice client and forces a fresh reconnect next time
+					_streamFailed = true;
+					throw;
 				}
 			}
 
@@ -367,7 +396,13 @@ namespace TTSBot.Modules
 				{
 					try
 					{
-						await _opusStream.FlushAsync();
+						// Use a timeout to prevent hanging forever if the voice stream is in a bad state
+						using var flushCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+						await _opusStream.FlushAsync(flushCts.Token);
+					}
+					catch (OperationCanceledException)
+					{
+						Console.Error.WriteLine("[TTS] FlushAsync timed out (5s) during session dispose — voice stream may be stalled.");
 					}
 					catch (Exception ex)
 					{
@@ -376,6 +411,11 @@ namespace TTSBot.Modules
 
 					try { _opusStream.Dispose(); } catch { }
 					try { _voiceStream.Dispose(); } catch { }
+
+					// If the stream encountered a fatal error (e.g. cryptographic/encryption failure),
+					// invalidate the cached voice client so the next session creates a fresh connection
+					if (_streamFailed)
+						InvalidateVoiceClient(_guildId);
 				}
 				finally
 				{

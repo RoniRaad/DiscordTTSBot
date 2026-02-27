@@ -190,7 +190,7 @@ voiceListener.OnTranscription = async (userId, text) =>
 
 	try
 	{
-		var voiceInfo = TTSCommands.GetActiveVoiceInfo();
+		var voiceInfo = await TTSCommands.GetActiveVoiceInfoAsync();
 		if (voiceInfo is not (ulong guildId, ulong channelId))
 		{
 			Console.Error.WriteLine("[LLM] No active voice channel to play response in.");
@@ -282,40 +282,94 @@ voiceListener.OnTranscription = async (userId, text) =>
 
 		Console.WriteLine($"[Pipeline] {sentences.Count} sentences, pre-buffered {queue.Count}");
 
-		// Open a single persistent voice/opus stream for the entire response.
-		// This avoids creating/destroying streams between sentences, which
-		// causes audible pops and gaps on Discord.
-		await using var session = await TTSCommands.OpenPlaybackSessionAsync(client, guildId, channelId, cts.Token);
+		// Open a persistent voice/opus stream for the response.
+		// If the stream fails mid-playback (e.g. crypto error), we dispose it,
+		// reconnect, and resume from the sentence that failed.
+		const int maxRetries = 2;
+		var retryCount = 0;
+		TTSCommands.VoicePlaybackSession? session = null;
 
-		while (queue.Count > 0)
+		try
 		{
-			var (idx, task) = queue.Dequeue();
-			using var pcm = await task;
-			cts.Token.ThrowIfCancellationRequested();
+			session = await TTSCommands.OpenPlaybackSessionAsync(client, guildId, channelId, cts.Token);
 
-			var playbackMs = PlaybackSec(pcm.Length) * 1000.0;
-
-			// Ensure at least 1 sentence is always in-flight during playback
-			if (queue.Count == 0)
-				EnqueueNext();
-
-			// If playback is long enough, speculatively start one more.
-			// We compare playback time against the estimated synthesis
-			// time of the next queued sentence — if playback covers most
-			// of it, the extra concurrent request won't cause a stall.
-			if (queue.Count == 1 && nextToEnqueue < sentences.Count)
+			while (queue.Count > 0)
 			{
-				var nextSynthMs = EstimateSynthMs(sentences[nextToEnqueue]);
-				if (playbackMs > nextSynthMs * 0.6)
+				var (idx, task) = queue.Dequeue();
+				MemoryStream pcm;
+				try
 				{
-					Console.WriteLine($"[Pipeline] Pre-fetching sentence {nextToEnqueue} " +
-						$"(playback ~{playbackMs:F0}ms, next synth ~{nextSynthMs:F0}ms)");
-					EnqueueNext();
+					pcm = await task;
+				}
+				catch (OperationCanceledException) { throw; }
+				catch (Exception ex)
+				{
+					Console.Error.WriteLine($"[Pipeline] Synthesis failed for sentence {idx}: {ex.Message}");
+					continue;
+				}
+
+				using (pcm)
+				{
+					cts.Token.ThrowIfCancellationRequested();
+
+					var playbackMs = PlaybackSec(pcm.Length) * 1000.0;
+
+					// Ensure at least 1 sentence is always in-flight during playback
+					if (queue.Count == 0)
+						EnqueueNext();
+
+					// If playback is long enough, speculatively start one more.
+					if (queue.Count == 1 && nextToEnqueue < sentences.Count)
+					{
+						var nextSynthMs = EstimateSynthMs(sentences[nextToEnqueue]);
+						if (playbackMs > nextSynthMs * 0.6)
+						{
+							Console.WriteLine($"[Pipeline] Pre-fetching sentence {nextToEnqueue} " +
+								$"(playback ~{playbackMs:F0}ms, next synth ~{nextSynthMs:F0}ms)");
+							EnqueueNext();
+						}
+					}
+
+					var isLast = idx == sentences.Count - 1;
+					try
+					{
+						await session.PlayPcmAsync(pcm, isLast ? 0 : persona.SentencePauseSeconds, cts.Token);
+					}
+					catch (OperationCanceledException) { throw; }
+					catch (Exception ex)
+					{
+						Console.Error.WriteLine($"[Pipeline] Playback failed for sentence {idx}: {ex.Message}");
+
+						// Dispose broken session (invalidates stale voice client)
+						await session.DisposeAsync();
+						session = null;
+
+						if (++retryCount > maxRetries)
+						{
+							Console.Error.WriteLine($"[Pipeline] Max retries ({maxRetries}) exceeded, giving up.");
+							break;
+						}
+
+						// Re-synthesize the failed sentence and put it at the front
+						Console.WriteLine($"[Pipeline] Reconnecting and resuming from sentence {idx}...");
+						var retryTask = TTSCommands.SynthesizeToPcmAsync(client.Id, sentences[idx], instruct, persona.Speed, cts.Token);
+						var retryQueue = new Queue<(int index, Task<MemoryStream> task)>();
+						retryQueue.Enqueue((idx, retryTask));
+						while (queue.Count > 0)
+							retryQueue.Enqueue(queue.Dequeue());
+						queue = retryQueue;
+
+						// Open fresh session on new voice connection
+						session = await TTSCommands.OpenPlaybackSessionAsync(client, guildId, channelId, cts.Token);
+						continue;
+					}
 				}
 			}
-
-			var isLast = idx == sentences.Count - 1;
-			await session.PlayPcmAsync(pcm, isLast ? 0 : persona.SentencePauseSeconds, cts.Token);
+		}
+		finally
+		{
+			if (session is not null)
+				await session.DisposeAsync();
 		}
 	}
 	catch (OperationCanceledException)
@@ -360,7 +414,7 @@ client.MessageCreate += async message =>
 // account for the triggering user's new state manually.
 client.VoiceStateUpdate += voiceState =>
 {
-	_ = Task.Run(() =>
+	_ = Task.Run(async () =>
 	{
 		try
 		{
@@ -410,7 +464,7 @@ client.VoiceStateUpdate += voiceState =>
 			if (usersInChannel == 0)
 			{
 				Console.WriteLine($"Bot is alone in voice channel {botChannelId}, disconnecting...");
-				TTSCommands.DisconnectFromGuild(guildId);
+				await TTSCommands.DisconnectFromGuildAsync(guildId);
 			}
 		}
 		catch (Exception ex)
@@ -491,7 +545,7 @@ _ = Task.Run(async () =>
 			if (guildsToDisconnect.Count == 0)
 			{
 				var idleFor = DateTime.UtcNow - TTSCommands.LastActivityUtc;
-				if (idleFor.TotalMinutes >= idleTimeoutMinutes && TTSCommands.GetActiveVoiceInfo() is not null)
+				if (idleFor.TotalMinutes >= idleTimeoutMinutes && await TTSCommands.GetActiveVoiceInfoAsync() is not null)
 				{
 					Console.WriteLine($"[Watchdog] Bot idle for {idleFor.TotalMinutes:F0} minutes (threshold: {idleTimeoutMinutes}), disconnecting from all voice channels...");
 					foreach (var (guildId, guild) in client.Cache.Guilds)
@@ -503,12 +557,12 @@ _ = Task.Run(async () =>
 			}
 
 			foreach (var guildId in guildsToDisconnect)
-				TTSCommands.DisconnectFromGuild(guildId);
+				await TTSCommands.DisconnectFromGuildAsync(guildId);
 
 			// Reservation management: renew if we're in voice, release if not
 			if (reservationClient is not null)
 			{
-				var activeVoice = TTSCommands.GetActiveVoiceInfo();
+				var activeVoice = await TTSCommands.GetActiveVoiceInfoAsync();
 				if (activeVoice is not null && reservationClient.HasActiveReservation)
 				{
 					// Bot is in voice — keep the server alive

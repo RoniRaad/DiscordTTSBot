@@ -164,7 +164,208 @@ namespace DiscordTTSBot.LLM
 				["sol"] = "Aurelion Sol",
 				["asol"] = "Aurelion Sol",
 				["a sol"] = "Aurelion Sol",
-			};
+                ["cait"] = "Caitlyn",
+                ["kate lynn"] = "Caitlyn",
+                ["kate"] = "Caitlyn",              // optional: can collide with "Kayn" in some STT engines
+
+                ["jacks"] = "Jax",
+                ["jaxx"] = "Jax",
+
+                ["kayne"] = "Kayn",
+                ["cain"] = "Kayn",
+                ["kane"] = "Kayn",
+
+                ["irellia"] = "Irelia",
+                ["i relia"] = "Irelia",
+                ["iralia"] = "Irelia",
+
+                ["ill aoi"] = "Illaoi",
+                ["illoy"] = "Illaoi",
+                ["illowy"] = "Illaoi",
+                ["eel aoi"] = "Illaoi",
+
+                ["anivia"] = "Anivia",
+                ["a nivia"] = "Anivia",
+
+                ["amumu"] = "Amumu",
+                ["a mumu"] = "Amumu",
+
+                ["blademaster yi"] = "Master Yi",
+                ["master ye"] = "Master Yi",
+                ["master e"] = "Master Yi",
+
+                ["shaco"] = "Shaco",
+                ["shake oh"] = "Shaco",
+                ["shako"] = "Shaco",
+
+                ["karthus"] = "Karthus",
+                ["car this"] = "Karthus",
+                ["carthus"] = "Karthus",
+
+                ["malphite"] = "Malphite",
+                ["mal fight"] = "Malphite",
+                ["mal fite"] = "Malphite",
+
+                ["morgana"] = "Morgana",
+                ["more gana"] = "Morgana",
+
+                ["leona"] = "Leona",
+                ["lee ona"] = "Leona",
+
+                ["lillia"] = "Lillia",
+                ["lilia"] = "Lillia",
+                ["lily uh"] = "Lillia",
+
+                ["diana"] = "Diana",
+                ["die anna"] = "Diana",
+                ["dy anna"] = "Diana",
+
+                ["quinn"] = "Quinn",
+                ["queen"] = "Quinn",
+
+                ["sejuani"] = "Sejuani",
+                ["sej juani"] = "Sejuani",
+                ["say juani"] = "Sejuani",
+
+                ["shyvana"] = "Shyvana",
+                ["shivana"] = "Shyvana",
+                ["shi vana"] = "Shyvana",
+
+                ["xinzhao"] = "Xin Zhao",
+                ["shin zhao"] = "Xin Zhao",
+                ["zin zhao"] = "Xin Zhao",
+                ["sing zhao"] = "Xin Zhao",
+
+                ["wukong"] = "Wukong",
+                ["wu kong"] = "Wukong",
+                ["woo kong"] = "Wukong",
+
+                ["renekton"] = "Renekton",
+                ["renek ton"] = "Renekton",
+                ["renektonn"] = "Renekton",
+
+                ["hecarim"] = "Hecarim",
+                ["heckerim"] = "Hecarim",
+                ["hec a rim"] = "Hecarim",
+
+                ["volibear"] = "Volibear",
+                ["voli bear"] = "Volibear",
+                ["volley bear"] = "Volibear",
+
+                ["fiddlesticks"] = "Fiddlesticks",
+                ["fiddle sticks"] = "Fiddlesticks",
+                ["fiddle stick"] = "Fiddlesticks",
+
+                ["pantheon"] = "Pantheon",
+                ["pan theon"] = "Pantheon",
+
+                ["cassiopeia"] = "Cassiopeia",
+                ["cassio"] = "Cassiopeia",
+                ["cassio pia"] = "Cassiopeia",
+                ["cassie opie uh"] = "Cassiopeia",
+
+                ["leblanc"] = "LeBlanc",
+                ["la blanc"] = "LeBlanc",
+                ["luh blanc"] = "LeBlanc",
+
+                ["ezreal"] = "Ezreal",
+                ["ez real"] = "Ezreal",
+                ["israel"] = "Ezreal",
+
+                ["draven"] = "Draven",
+                ["dravin"] = "Draven",
+
+                ["tristana"] = "Tristana",
+                ["trist"] = "Tristana",
+
+                ["xayah"] = "Xayah",
+                ["zaya"] = "Xayah",
+                ["xaya"] = "Xayah",
+
+                ["rakan"] = "Rakan",
+                ["rah con"] = "Rakan",
+                ["ra con"] = "Rakan",
+
+                ["senna"] = "Senna",
+                ["sena"] = "Senna",
+
+                ["seraphine"] = "Seraphine",
+                ["sera fine"] = "Seraphine",
+                ["sarah fiend"] = "Seraphine",     // surprisingly common STT
+
+                ["yuumi"] = "Yuumi",
+                ["yumi"] = "Yuumi",
+                ["you me"] = "Yuumi",
+
+                ["zilean"] = "Zilean",
+                ["zil e an"] = "Zilean",
+                ["zillion"] = "Zilean",
+
+                ["zeri"] = "Zeri",
+                ["zerry"] = "Zeri",
+                ["zeri"] = "Zeri",
+
+                ["rengar"] = "Rengar",
+                ["rain gar"] = "Rengar",
+                ["ren gar"] = "Rengar",
+
+                ["gnar"] = "Gnar",
+                ["nar"] = "Gnar",
+
+                ["ornn"] = "Ornn",
+                ["orn"] = "Ornn",
+
+                ["belveth"] = "Bel'Veth",
+                ["bel veth"] = "Bel'Veth",
+                ["belbeth"] = "Bel'Veth",
+
+                ["ksante"] = "K'Sante",            // you have kasante/cosante; add this too
+                ["k sante"] = "K'Sante",
+
+                ["kaisa"] = "Kai'Sa",              // you already have kaisa; add spaced versions
+                ["kai sa"] = "Kai'Sa",
+                ["kai'sa"] = "Kai'Sa",
+
+                ["chogath"] = "Cho'Gath",          // you have; add short spoken forms carefully
+                ["cho gath"] = "Cho'Gath",
+                ["cho goth"] = "Cho'Gath",
+
+                ["kogmaw"] = "Kog'Maw",
+                ["kog maw"] = "Kog'Maw",
+                ["cog maw"] = "Kog'Maw",
+
+                ["khazix"] = "Kha'Zix",
+                ["kha zix"] = "Kha'Zix",
+                ["kha'zix"] = "Kha'Zix",
+                ["kaz ix"] = "Kha'Zix",
+
+                ["velkoz"] = "Vel'Koz",
+                ["vel koz"] = "Vel'Koz",
+                ["vel cause"] = "Vel'Koz",
+
+                ["reksai"] = "Rek'Sai",
+                ["rek sai"] = "Rek'Sai",
+                ["wreck sigh"] = "Rek'Sai",
+
+                // ---- Extra common abbreviations that are usually safe in-game voice commands ----
+                ["corki"] = "Corki",
+                ["kled"] = "Kled",
+                ["riven"] = "Riven",
+                ["sona"] = "Sona",
+                ["syndra"] = "Syndra",
+                ["cindra"] = "Syndra",
+                ["viktor"] = "Viktor",
+                ["victor"] = "Viktor",
+                ["taliyah"] = "Taliyah",
+                ["talia"] = "Taliyah",
+                ["qiyana"] = "Qiyana",
+                ["key ana"] = "Qiyana",
+                ["camille"] = "Camille",
+                ["ka mil"] = "Camille",
+                ["akali"] = "Akali",
+                ["a kali"] = "Akali",
+                ["khaat"] = "Katarina",            // optional: only if you hear this from your STT
+            };
 
 			foreach (var (alias, champName) in phoneticAliases)
 				_champLookup.TryAdd(alias, champName);
@@ -351,7 +552,105 @@ namespace DiscordTTSBot.LLM
 				["gargoyle stoneplate"] = "Gargoyle Stoneplate",
 				["gargoyle"] = "Gargoyle Stoneplate",
 				["stoneplate"] = "Gargoyle Stoneplate",
-			};
+                // -------------------- Whisper-friendly item mishears --------------------
+
+                // Lord Dominik's Regards (apostrophe drop + "dominic")
+                ["lord dominiks"] = "Lord Dominik's Regards",
+                ["lord dominic"] = "Lord Dominik's Regards",
+                ["lord dominik"] = "Lord Dominik's Regards",
+                ["dominiks"] = "Lord Dominik's Regards",
+                ["ldr"] = "Lord Dominik's Regards",
+
+                // Serylda's Grudge (very common misspells)
+                ["seryldas"] = "Serylda's Grudge",
+                ["serylda"] = "Serylda's Grudge",
+                ["syrildas"] = "Serylda's Grudge",
+                ["sir yeldas"] = "Serylda's Grudge",
+                ["grudge"] = "Serylda's Grudge", // optional
+
+                // Runaan's Hurricane
+                ["runaans"] = "Runaan's Hurricane",
+                ["runans"] = "Runaan's Hurricane",
+                ["ru naans"] = "Runaan's Hurricane",
+                ["hurricane"] = "Runaan's Hurricane", // optional
+
+                // Statikk Shiv (static/statik)
+                ["statikk shiv"] = "Statikk Shiv",
+                ["static shiv"] = "Statikk Shiv",
+                ["statik shiv"] = "Statikk Shiv",
+                ["statikk"] = "Statikk Shiv",
+
+                // Guinsoo's Rageblade
+                ["guinsoos"] = "Guinsoo's Rageblade",
+                ["guinsoo"] = "Guinsoo's Rageblade",
+                ["gwen sooz"] = "Guinsoo's Rageblade",
+                ["rage blade"] = "Guinsoo's Rageblade",
+                ["rageblade"] = "Guinsoo's Rageblade",
+
+                // Rylai's Crystal Scepter (riley/rylai)
+                ["rylais"] = "Rylai's Crystal Scepter",
+                ["rylai"] = "Rylai's Crystal Scepter",
+                ["rileys"] = "Rylai's Crystal Scepter",
+                ["riley's"] = "Rylai's Crystal Scepter",
+                ["crystal scepter"] = "Rylai's Crystal Scepter",
+
+                // Lich Bane
+                ["lich bane"] = "Lich Bane",
+                ["lick bane"] = "Lich Bane",
+
+                // Hextech Rocketbelt / Protobelt
+                ["rocketbelt"] = "Hextech Rocketbelt",
+                ["rocket belt"] = "Hextech Rocketbelt",
+                ["proto belt"] = "Hextech Rocketbelt",
+                ["protobelt"] = "Hextech Rocketbelt",
+
+                // Jak'Sho
+                ["jaksho"] = "Jak'Sho, The Protean",
+                ["jak sho"] = "Jak'Sho, The Protean",
+                ["jack show"] = "Jak'Sho, The Protean",
+                ["jack sho"] = "Jak'Sho, The Protean",
+
+                // Spear of Shojin
+                ["spear of shojin"] = "Spear of Shojin",
+                ["shojin"] = "Spear of Shojin",
+                ["show jin"] = "Spear of Shojin",
+                ["sho jin"] = "Spear of Shojin",
+
+                // Essence Reaver
+                ["essence reaver"] = "Essence Reaver",
+                ["essence reefer"] = "Essence Reaver", // yep, Whisper does this sometimes
+
+                // Bloodthirster
+                ["bloodthirster"] = "Bloodthirster",
+                ["blood thirster"] = "Bloodthirster",
+
+                // Stormrazor
+                ["stormrazor"] = "Stormrazor",
+                ["storm razor"] = "Stormrazor",
+
+                // Titanic / Ravenous Hydra
+                ["titanic"] = "Titanic Hydra",
+                ["titanic hydra"] = "Titanic Hydra",
+                ["ravenous"] = "Ravenous Hydra",
+                ["ravenous hydra"] = "Ravenous Hydra",
+
+                // Demonic Embrace
+                ["demonic embrace"] = "Demonic Embrace",
+                ["demonic"] = "Demonic Embrace",
+
+                // Shadowflame
+                ["shadow flame"] = "Shadowflame",
+                ["shadowflame"] = "Shadowflame",
+
+                // Locket of the Iron Solari
+                ["locket"] = "Locket of the Iron Solari",
+                ["iron solari"] = "Locket of the Iron Solari",
+                ["solari"] = "Locket of the Iron Solari",
+
+                // Knight's Vow
+                ["knights vow"] = "Knight's Vow",
+                ["knights"] = "Knight's Vow",
+            };
 
 			foreach (var (alias, itemName) in phoneticAliases)
 				_itemLookup.TryAdd(alias, itemName);

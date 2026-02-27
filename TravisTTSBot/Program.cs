@@ -84,7 +84,7 @@ var personas = new List<AiPersona>
 	},
 	new()
 	{
-		Keywords = ["bibi", "netanyahu", "benjamin", "bb", "Na'anyahu", "Nanyahu", "Then, Yahoo", "LenYahoo"],
+		Keywords = ["netanyahu", "benjamin","Na'anyahu", "Nanyahu", "Then, Yahoo", "LenYahoo"],
 		Voice = "Netanyahu",
 		SentencePauseSeconds = 0.6,
 		SystemPrompt = """
@@ -100,15 +100,15 @@ var personas = new List<AiPersona>
 	},
 	new()
 	{
-		Keywords = ["genius", "genius bot", "genus bot", "g bot", "league bot", "leaguebot"],
+		Keywords = ["genius bot", "genus bot", "league bot", "leaguebot"],
 		Voice =  "en-US-Wavenet-D",
 		SentencePauseSeconds = 0.2,
 		SystemPrompt = """
 			You are a League of Legends expert and coach. You have deep knowledge of every champion, item, and game mechanic.
 			When champion or item data is provided in [DATA] blocks, use that specific information to answer accurately. Reference actual ability names, cooldowns, and costs.
 			If no data is provided, answer from your general knowledge.
-			Be direct and opinionated. Say what's strong, what's weak, and why. Give practical advice.
-			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs, no numbers unless essential.
+			Be direct and opinionated. Say what's strong, what's weak, and why. Give practical advice. Short responses are prefered.
+			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs, no large numbers unless essential.
 			""",
 		ContextProvider = async (userMessage) => await leagueContext.ExtractContextAsync(userMessage),
 		Model = "deepseek-r1:14b",
@@ -510,7 +510,7 @@ Console.WriteLine("Client connected...");
 // Background watchdog: runs every 60 seconds to ensure the bot doesn't
 // stay in a voice channel alone, and renews/releases reservations as needed.
 // Also disconnects after an idle timeout if nobody uses the bot.
-var idleTimeoutMinutes = int.Parse(Environment.GetEnvironmentVariable("IDLE_TIMEOUT_MINUTES") ?? "10");
+var idleTimeoutMinutes = int.Parse(Environment.GetEnvironmentVariable("IDLE_TIMEOUT_MINUTES") ?? "60");
 _ = Task.Run(async () =>
 {
 	while (true)

@@ -100,7 +100,7 @@ var personas = new List<AiPersona>
 	},
 	new()
 	{
-		Keywords = ["genius bot", "genus bot", "league bot", "leaguebot", "leekbot", "geniusbot", "leek bot"],
+		Keywords = ["genius bot", "genius spot", "genus bot", "league bot", "leaguebot", "leekbot", "geniusbot", "leek bot"],
 		Voice =  "en-US-Wavenet-D",
 		SentencePauseSeconds = 0.2,
 		SystemPrompt = """

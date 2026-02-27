@@ -29,6 +29,11 @@ var transcriptionService = new TranscriptionService(localTTSHost);
 var ollamaService = new OllamaService(localTTSHost);
 var voiceListener = new VoiceListener(transcriptionService);
 
+// Initialize League of Legends data service (champion/item data from CommunityDragon)
+var leagueData = new LeagueDataService();
+await leagueData.InitializeAsync();
+var leagueContext = new LeagueContextExtractor(leagueData);
+
 // Register AI personas — each has a keyword trigger, system prompt, and TTS voice
 var personas = new List<AiPersona>
 {
@@ -93,6 +98,23 @@ var personas = new List<AiPersona>
 			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs.
 			"""
 	},
+	new()
+	{
+		Keywords = ["genius", "genius bot", "genus bot", "g bot", "league bot", "leaguebot"],
+		Voice =  "en-US-Wavenet-D",
+		SentencePauseSeconds = 0.2,
+		SystemPrompt = """
+			You are a League of Legends expert and coach. You have deep knowledge of every champion, item, and game mechanic.
+			When champion or item data is provided in [DATA] blocks, use that specific information to answer accurately. Reference actual ability names, cooldowns, and costs.
+			If no data is provided, answer from your general knowledge.
+			Be direct and opinionated. Say what's strong, what's weak, and why. Give practical advice.
+			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs, no numbers unless essential.
+			""",
+		ContextProvider = async (userMessage) => await leagueContext.ExtractContextAsync(userMessage),
+		Model = "deepseek-r1:14b",
+		TTSProvider = googleTTS,
+		Speed = 1.5
+    },
 };
 
 // Ensure all persona voices are registered with the local TTS provider
@@ -175,11 +197,16 @@ voiceListener.OnTranscription = async (userId, text) =>
 			return;
 		}
 
-		// Set the bot's TTS voice to the matched persona's voice
-		ttsRegistry.SetUserProvider(client.Id, localTTS, persona.Voice);
+		// Set the bot's TTS voice/provider to the matched persona's
+		ttsRegistry.SetUserProvider(client.Id, persona.TTSProvider ?? localTTS, persona.Voice);
 
 		// Get full LLM response + voice instruct
-		var (response, instruct) = await ollamaService.ChatAsync(persona, text, cts.Token);
+		// Enrich message with external context if persona has a context provider (e.g. LoL data)
+		var enrichedText = persona.ContextProvider is not null
+			? await persona.ContextProvider(text)
+			: text;
+
+		var (response, instruct) = await ollamaService.ChatAsync(persona, enrichedText, cts.Token);
 
 		if (string.IsNullOrWhiteSpace(response))
 			return;
@@ -245,7 +272,7 @@ voiceListener.OnTranscription = async (userId, text) =>
 		{
 			if (nextToEnqueue >= sentences.Count) return;
 			var idx = nextToEnqueue++;
-			queue.Enqueue((idx, TTSCommands.SynthesizeToPcmAsync(client.Id, sentences[idx], instruct, cts.Token)));
+			queue.Enqueue((idx, TTSCommands.SynthesizeToPcmAsync(client.Id, sentences[idx], instruct, persona.Speed, cts.Token)));
 		}
 
 		// Pre-buffer: always start sentences 0 and 1 before playback

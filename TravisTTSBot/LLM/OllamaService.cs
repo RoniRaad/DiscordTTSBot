@@ -33,7 +33,7 @@ namespace DiscordTTSBot.LLM
 
 			var requestJson = JsonSerializer.Serialize(new
 			{
-				model = _model,
+				model = persona.Model ?? _model,
 				messages = persona.History.Select(m => new { role = m.Role, content = m.Content }).ToArray(),
 				stream = false,
 				think = false,

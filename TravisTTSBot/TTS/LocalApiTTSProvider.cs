@@ -73,12 +73,12 @@ namespace DiscordTTSBot.TTS
 			}
 		}
 
-		public async Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, CancellationToken cancellationToken = default)
+		public async Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, double speed = 1.0, CancellationToken cancellationToken = default)
 		{
 			if (!_healthy)
 				await WaitForHealthyAsync(cancellationToken);
 
-			Console.WriteLine($"[TTS] Requesting synthesis: \"{text}\" (voice: {voice}, instruct: {instruct ?? "none"})");
+			Console.WriteLine($"[TTS] Requesting synthesis: \"{text}\" (voice: {voice}, instruct: {instruct ?? "none"}, speed: {speed:F1})");
 			var sw = System.Diagnostics.Stopwatch.StartNew();
 
 			using var requestClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
@@ -88,7 +88,7 @@ namespace DiscordTTSBot.TTS
 				input = text,
 				voice,
 				response_format = "mp3",
-				speed = 1 // remove instruct because it was causing issues with synthesis
+				speed
 			}, cancellationToken);
 
 			response.EnsureSuccessStatusCode();

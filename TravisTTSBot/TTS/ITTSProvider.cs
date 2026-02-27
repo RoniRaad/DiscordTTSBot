@@ -4,7 +4,7 @@ namespace DiscordTTSBot.TTS
 	{
 		string Name { get; }
 
-		Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, CancellationToken cancellationToken = default);
+		Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, double speed = 1.0, CancellationToken cancellationToken = default);
 
 		bool IsValidVoice(string voice);
 

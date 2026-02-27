@@ -26,12 +26,16 @@ namespace DiscordTTSBot.TTS
 				_client.ListVoices(new ListVoicesRequest()).Voices.Select(v => v.Name).ToList());
 		}
 
-		public async Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, CancellationToken cancellationToken = default)
+		public async Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, double speed = 1.0, CancellationToken cancellationToken = default)
 		{
 			var response = _client.SynthesizeSpeech(new SynthesizeSpeechRequest
 			{
 				Input = new SynthesisInput { Text = text },
-				AudioConfig = new AudioConfig { AudioEncoding = AudioEncoding.OggOpus },
+				AudioConfig = new AudioConfig
+				{
+					AudioEncoding = AudioEncoding.OggOpus,
+					SpeakingRate = speed
+				},
 				Voice = new VoiceSelectionParams
 				{
 					Name = voice,

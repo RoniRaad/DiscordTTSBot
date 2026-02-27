@@ -171,7 +171,7 @@ namespace TTSBot.Modules
 			}
 
 			var voice = Providers.GetVoiceOverride(userId) ?? UserSettingsHelper.GetUserVoice(userId);
-			using var audioStream = await provider.SynthesizeAsync(words, voice, null, cancellationToken);
+			using var audioStream = await provider.SynthesizeAsync(words, voice, null, 1.0, cancellationToken);
 
 			cancellationToken.ThrowIfCancellationRequested();
 
@@ -206,11 +206,11 @@ namespace TTSBot.Modules
 		/// <summary>
 		/// Synthesizes text to PCM audio (s16le stereo 48kHz) via the user's TTS provider + FFmpeg.
 		/// </summary>
-		public static async Task<MemoryStream> SynthesizeToPcmAsync(ulong userId, string text, string? instruct = null, CancellationToken cancellationToken = default)
+		public static async Task<MemoryStream> SynthesizeToPcmAsync(ulong userId, string text, string? instruct = null, double speed = 1.0, CancellationToken cancellationToken = default)
 		{
 			var provider = Providers.GetProviderForUser(userId);
 			var voice = Providers.GetVoiceOverride(userId) ?? UserSettingsHelper.GetUserVoice(userId);
-			using var audioStream = await provider.SynthesizeAsync(text, voice, instruct, cancellationToken);
+			using var audioStream = await provider.SynthesizeAsync(text, voice, instruct, speed, cancellationToken);
 			var pcm = await StreamHelpers.ConvertToDiscordAudioFormat(audioStream, cancellationToken);
 			pcm.Position = 0;
 			return (MemoryStream)pcm;

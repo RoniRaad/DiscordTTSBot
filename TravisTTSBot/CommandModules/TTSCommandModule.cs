@@ -93,12 +93,16 @@ namespace TTSBot.Modules
 			await _voiceLock.WaitAsync();
 			try
 			{
+				// Tell Discord to leave the voice channel FIRST, before disposing
+				// the voice client, so the gateway processes the leave request.
+				Console.WriteLine($"[Disconnect] Sending voice state update (channel=null) for guild {guildId}");
+				await Client.UpdateVoiceStateAsync(new VoiceStateProperties(guildId, null));
+				Console.WriteLine($"[Disconnect] Voice state update sent for guild {guildId}");
+
 				if (_voiceClients.Remove(guildId, out var voiceClient))
 				{
+					Console.WriteLine($"[Disconnect] Disposing voice client for guild {guildId}");
 					voiceClient.Dispose();
-
-					// Tell Discord to leave the voice channel
-					_ = Client.UpdateVoiceStateAsync(new VoiceStateProperties(guildId, null));
 
 					if (_voiceClients.Count == 0 && OnLastVoiceDisconnect is not null)
 					{

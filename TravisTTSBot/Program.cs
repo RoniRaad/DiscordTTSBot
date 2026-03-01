@@ -170,6 +170,7 @@ voiceListener.AddUser(280553115583774720);
 voiceListener.AddUser(173506944273743872); 
 voiceListener.AddUser(699798573285507092); 
 voiceListener.AddUser(790584186054377472); 
+voiceListener.AddUser(379742932108050444); 
 TTSCommands.VoiceListener = voiceListener;
 
 var token = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");

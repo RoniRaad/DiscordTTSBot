@@ -1,0 +1,60 @@
+using Google.Cloud.TextToSpeech.V1;
+
+namespace DiscordTTSBot.TTS
+{
+	public class GoogleChirpTTSProvider : ITTSProvider
+	{
+		private readonly TextToSpeechClient _client;
+		private readonly Lazy<IReadOnlyList<string>> _voices;
+
+		public string Name => "google-chirp3-hd";
+		public string DefaultVoice => "en-US-Chirp3-HD-Charon";
+
+		public GoogleChirpTTSProvider()
+		{
+			var credentialsJson = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS_JSON");
+			if (credentialsJson is null)
+			{
+				Console.Error.WriteLine("GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is not set. Aborting");
+				Environment.Exit(1);
+			}
+
+			var builder = new TextToSpeechClientBuilder { JsonCredentials = credentialsJson };
+			_client = builder.Build();
+
+			_voices = new Lazy<IReadOnlyList<string>>(() =>
+				_client.ListVoices(new ListVoicesRequest())
+					.Voices
+					.Select(v => v.Name)
+					.Where(n => n.Contains("Chirp3-HD", StringComparison.OrdinalIgnoreCase))
+					.ToList());
+		}
+
+		public async Task<Stream> SynthesizeAsync(string text, string voice, string? instruct = null, double speed = 1.0, CancellationToken cancellationToken = default)
+		{
+			var response = await _client.SynthesizeSpeechAsync(new SynthesizeSpeechRequest
+			{
+				Input = new SynthesisInput { Text = text },
+				AudioConfig = new AudioConfig
+				{
+					AudioEncoding = AudioEncoding.OggOpus,
+					SpeakingRate = speed
+				},
+				Voice = new VoiceSelectionParams
+				{
+					Name = voice,
+					LanguageCode = voice[..5]
+				},
+			}, cancellationToken);
+
+			var stream = new MemoryStream();
+			response.AudioContent.WriteTo(stream);
+			stream.Position = 0;
+			return stream;
+		}
+
+		public bool IsValidVoice(string voice) => _voices.Value.Contains(voice);
+
+		public IReadOnlyList<string> GetAvailableVoices() => _voices.Value;
+	}
+}

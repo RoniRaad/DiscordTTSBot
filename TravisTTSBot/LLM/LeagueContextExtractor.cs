@@ -687,6 +687,45 @@ namespace DiscordTTSBot.LLM
 			return $"[DATA]\n{string.Join("\n", parts)}[/DATA]\n{userMessage}";
 		}
 
+	/// <summary>
+		/// Resolves a possibly-fuzzy champion name to the canonical name.
+		/// Returns null if no match found.
+		/// </summary>
+		public string? ResolveChampionName(string input)
+		{
+			var lower = input.ToLower().Trim();
+
+			// Exact lookup
+			if (_champLookup.TryGetValue(lower, out var exact))
+				return exact;
+
+			// Normalized lookup
+			var normalized = Normalize(lower);
+			if (_champLookup.TryGetValue(normalized, out var norm))
+				return norm;
+
+			// Fuzzy match
+			return FuzzyMatch(lower, _champLookup);
+		}
+
+		/// <summary>
+		/// Resolves a possibly-fuzzy item name to the canonical name.
+		/// Returns null if no match found.
+		/// </summary>
+		public string? ResolveItemName(string input)
+		{
+			var lower = input.ToLower().Trim();
+
+			if (_itemLookup.TryGetValue(lower, out var exact))
+				return exact;
+
+			var normalized = Normalize(lower);
+			if (_itemLookup.TryGetValue(normalized, out var norm))
+				return norm;
+
+			return FuzzyMatch(lower, _itemLookup);
+		}
+
 		private List<string> FindChampions(string text)
 		{
 			var found = new HashSet<string>();
@@ -843,7 +882,7 @@ namespace DiscordTTSBot.LLM
 			return costs[b.Length];
 		}
 
-		private static string FormatChampion(ChampionInfo c)
+		public static string FormatChampion(ChampionInfo c)
 		{
 			var sb = new StringBuilder();
 			sb.AppendLine($"{c.Name} ({string.Join("/", c.Roles)}) - {c.DamageType} {c.AttackType}");
@@ -860,7 +899,7 @@ namespace DiscordTTSBot.LLM
 			return sb.ToString();
 		}
 
-		private static string FormatItem(ItemInfo item)
+		public static string FormatItem(ItemInfo item)
 		{
 			var sb = new StringBuilder();
 			sb.Append($"{item.Name} ({item.Price}g)");

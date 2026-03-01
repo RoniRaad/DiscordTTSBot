@@ -10,6 +10,7 @@ using TTSBot.Modules;
 
 // Initialize TTS providers
 var googleTTS = new GoogleTTSProvider();
+var chirpTTS = new GoogleChirpTTSProvider();
 var localTTSHost = Environment.GetEnvironmentVariable("LOCAL_TTS_HOST") ?? "192.168.1.67";
 var localTTS = new LocalApiTTSProvider(baseUrl: $"http://{localTTSHost}:8880");
 localTTS.AddVoice("Trav");
@@ -26,13 +27,14 @@ TTSCommands.Providers = ttsRegistry;
 
 // Initialize STT + LLM
 var transcriptionService = new TranscriptionService(localTTSHost);
-var ollamaService = new OllamaService(localTTSHost);
+var llmService = new OllamaService(localTTSHost);
 var voiceListener = new VoiceListener(transcriptionService);
 
 // Initialize League of Legends data service (champion/item data from CommunityDragon)
 var leagueData = new LeagueDataService();
 await leagueData.InitializeAsync();
 var leagueContext = new LeagueContextExtractor(leagueData);
+var lolalytics = new LoLalyticsService();
 
 // Register AI personas — each has a keyword trigger, system prompt, and TTS voice
 var personas = new List<AiPersona>
@@ -100,26 +102,69 @@ var personas = new List<AiPersona>
 	},
 	new()
 	{
-		Keywords = ["genius bot", "genius spot", "genus bot", "league bot", "leaguebot", "leekbot", "geniusbot", "leek bot"],
-		Voice =  "en-US-Wavenet-D",
-		SentencePauseSeconds = 0.2,
-		SystemPrompt = """
-			You are a League of Legends expert and coach. You have deep knowledge of every champion, item, and game mechanic.
-			When champion or item data is provided in [DATA] blocks, use that specific information to answer accurately. Reference actual ability names, cooldowns, and costs.
-			If no data is provided, answer from your general knowledge.
-			Be direct and opinionated. Say what's strong, what's weak, and why. Give practical advice. Short responses are prefered.
-			CRITICAL RULE: You are being spoken aloud via TTS. Keep responses to 2-4 short sentences. No lists, no paragraphs, no large numbers unless essential.
+		Keywords = ["oracle", "urkle", "genius bot", "genius spot", "genus bot", "league bot", "leaguebot", "leekbot", "geniusbot", "leek bot"],
+		Voice = "en-US-Chirp-HD-F",
+		SentencePauseSeconds = 0.3,
+		SystemPrompt = $"""
+			You are a League of Legends ranked coach. Give high win-rate advice for draft, lane, jungle/objectives, vision, macro, fights, and builds.
+
+			TOOLS (HARD RULE)
+			Use tools for any patch-dependent or champ/item-specific claim. Never guess numbers or current meta.
+			- get_champion_info: abilities, cooldowns, scalings, ranges, play patterns, role viability
+			- get_item_info: stats, passives, build paths, counter-items
+			- get_champion_build: current builds/runes/sums by role (and tier if provided)
+			- get_champion_matchup: head-to-head data
+			- get_champion_counters: counter lists + why
+			If the user gives no identifiable champ/item/matchup and tools aren't applicable, answer from fundamentals without tools.
+
+			FUNDAMENTALS
+			Reason from: gold+XP, tempo (reset timing), prio, wave state, vision/info, cooldowns/sums, objective timers, and comp win conditions. Waves→vision→objective. Avoid 50/50 unless forced.
+
+			STT
+			Inputs may be misspelled/phonetic; assume closest intended champ/item. If ambiguous, pick best guess and say "Assuming X".
+
+			OUTPUT (TTS)
+			2–4 short sentences, no lists. Sentence 1: wincon/threat. Sentence 2: next best action (next 1–3 min). Sentence 3 optional: one build pivot + why. Sentence 4 optional: one if/then.
 			""",
-		ContextProvider = async (userMessage) => await leagueContext.ExtractContextAsync(userMessage),
-		Model = "deepseek-r1:14b",
-		TTSProvider = googleTTS,
-		Speed = 1.5
-    },
+		Tools = LeagueToolHandler.CreateTools(),
+		ToolHandler = LeagueToolHandler.CreateHandler(leagueData, leagueContext, lolalytics),
+		TTSProvider = chirpTTS,
+		Speed = 1.3,
+		Backend = LlmBackend.Gemini,
+		Model = "gemini-2.5-flash"
+	},
 };
 
 // Ensure all persona voices are registered with the local TTS provider
 foreach (var p in personas)
 	localTTS.AddVoice(p.Voice);
+
+// Set Whisper prompt to bias recognition toward expected vocabulary.
+// Whisper uses this as conditioning text — only include hard-to-transcribe names.
+var hardChampions = new[]
+{
+	"Ahri", "Akali", "Akshan", "Aphelios", "Aurelion Sol", "Bel'Veth", "Cassiopeia",
+	"Cho'Gath", "Heimerdinger", "Kai'Sa", "Kha'Zix", "Kog'Maw", "Lillia", "Naafiri",
+	"Neeko", "Nidalee", "Qiyana", "Rek'Sai", "Renekton", "Rengar", "Sejuani",
+	"Skarner", "Syndra", "Thresh", "Vel'Koz", "Veigar", "Volibear", "Wukong",
+	"Xayah", "Xerath", "Xin Zhao", "Yasuo", "Yone", "Yuumi", "Zeri", "Ziggs", "Zyra",
+	"Ambessa", "Smolder", "Ivern", "Kindred", "Taliyah", "Taric", "Illaoi", "Orianna",
+	"Shaco", "Sion", "Swain", "Sylas", "Twitch", "Urgot", "Jayce", "Jhin"
+};
+var hardItems = new[]
+{
+	"Zhonya's Hourglass", "Rabadon's Deathcap", "Morellonomicon", "Liandry's Torment",
+	"Youmuu's Ghostblade", "Navori Flickerblade", "Guinsoo's Rageblade", "Runaan's Hurricane",
+	"Jak'Sho", "Muramana", "Manamune", "Mikael's Blessing", "Shadowflame",
+	"Hextech Rocketbelt", "Stridebreaker", "Shurelya's Battlesong", "Luden's Companion",
+	"Hwei", "Statikk Shiv", "Serylda's Grudge", "Terminus", "Solstice Sleigh",
+	"Echoes of Helia", "Nashor's Tooth", "Mejai's Soulstealer"
+};
+transcriptionService.Prompt =
+	"The users are talking to voice bots named Winston, Cartman, Uncle Iroh, Netanyahu, Oracle, and Genius Bot about League of Legends. " +
+	$"They discuss champions like {string.Join(", ", hardChampions)}, " +
+	$"and items like {string.Join(", ", hardItems)}. " +
+	"They refer to abilities as Q, W, E, and R.";
 
 voiceListener.AddUser(280553115583774720);
 voiceListener.AddUser(173506944273743872); 
@@ -206,7 +251,7 @@ voiceListener.OnTranscription = async (userId, text) =>
 			? await persona.ContextProvider(text)
 			: text;
 
-		var (response, instruct) = await ollamaService.ChatAsync(persona, enrichedText, cts.Token);
+		var (response, instruct) = await llmService.ChatAsync(persona, enrichedText, cts.Token);
 
 		if (string.IsNullOrWhiteSpace(response))
 			return;

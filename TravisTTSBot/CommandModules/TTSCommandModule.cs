@@ -121,15 +121,24 @@ namespace TTSBot.Modules
 		}
 
 		/// <summary>
-		/// Invalidates (disposes) the cached voice client for a guild.
+		/// Invalidates (disposes) the cached voice client for a guild and tells
+		/// Discord to leave the voice channel so the next join is a clean reconnect.
 		/// Must be called while holding _voiceLock.
-		/// The next call to EnsureVoiceClientAsync will create a fresh connection.
 		/// </summary>
-		private static void InvalidateVoiceClient(ulong guildId)
+		private static async Task InvalidateVoiceClientAsync(ulong guildId)
 		{
 			if (_voiceClients.Remove(guildId, out var voiceClient))
 			{
 				Console.WriteLine($"[TTS] Invalidating stale voice client for guild {guildId}");
+
+				// Tell Discord to leave BEFORE disposing the voice websocket,
+				// so the gateway clears our voice state. Without this, the next
+				// JoinVoiceChannelAsync would try to join a channel we're already
+				// in (from Discord's perspective) and never receive the expected
+				// VoiceStateUpdate/VoiceServerUpdate events, causing a timeout.
+				try { await Client.UpdateVoiceStateAsync(new VoiceStateProperties(guildId, null)); }
+				catch (Exception ex) { Console.Error.WriteLine($"[TTS] Failed to send voice leave for guild {guildId}: {ex.Message}"); }
+
 				try { voiceClient.Dispose(); } catch { }
 			}
 		}
@@ -419,7 +428,7 @@ namespace TTSBot.Modules
 					// If the stream encountered a fatal error (e.g. cryptographic/encryption failure),
 					// invalidate the cached voice client so the next session creates a fresh connection
 					if (_streamFailed)
-						InvalidateVoiceClient(_guildId);
+						await InvalidateVoiceClientAsync(_guildId);
 				}
 				finally
 				{

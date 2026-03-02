@@ -405,6 +405,9 @@ voiceListener.OnTranscription = async (userId, text) =>
 							retryQueue.Enqueue(queue.Dequeue());
 						queue = retryQueue;
 
+						// Brief delay to let Discord process the voice leave before rejoining
+						await Task.Delay(1000, cts.Token);
+
 						// Open fresh session on new voice connection
 						session = await TTSCommands.OpenPlaybackSessionAsync(client, guildId, channelId, cts.Token);
 						continue;
